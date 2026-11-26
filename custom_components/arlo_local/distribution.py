@@ -15,13 +15,16 @@ from pathlib import Path
 import aiohttp
 import psutil
 
+from .budget import AdmissionBudget, DEFAULT_STREAMS
+from .const import COLD_START_TIMEOUT_US
 from .inventory import safe_id
+from .native_video import NativeVideo
 from .process_owner import capture_owner, stop_owned_process
 from .rtsp_transport import Relay
 from .stream_fence import StreamFence
 from .warm import WarmLease
 
-MAX_ACTIVE_CAMERAS = 3
+MAX_ACTIVE_CAMERAS = DEFAULT_STREAMS
 MAX_WARM_CAMERAS = 2
 MAX_WARM_SECONDS = 120
 ROLLOVER_BASE_SECONDS = 1200
@@ -41,6 +44,7 @@ class Distributor:
         *,
         port: int = 554,
         ffmpeg_binary: str | None = None,
+        max_streams: int = DEFAULT_STREAMS,
     ) -> None:
         self.binary = binary
         self.ffmpeg_binary = ffmpeg_binary or shutil.which("ffmpeg")
@@ -57,12 +61,13 @@ class Distributor:
         self.directory: tempfile.TemporaryDirectory[str] | None = None
         self.relays: dict[str, Relay] = {}
         self.fences: dict[str, StreamFence] = {}
+        self.native = NativeVideo(self.ffmpeg_binary)
         self.warm_leases: dict[str, WarmLease] = {}
         self._output_ports: dict[str, int] = {}
         self.names: dict[str, str] = {}
         self._drain: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
-        self._admission = asyncio.BoundedSemaphore(MAX_ACTIVE_CAMERAS)
+        self._admission = AdmissionBudget(max_streams)
         self._closed = False
         self.rtsp_port: int | None = None
         self._prefix = "arlo_" + secrets.token_hex(8)
@@ -76,6 +81,13 @@ class Distributor:
             and self.process.returncode is None
             and self._started
         )
+
+    def resize_capacity(self, limit: int) -> None:
+        self._admission.resize(limit)
+
+    @property
+    def admitted_count(self) -> int:
+        return self._admission.in_use
 
     @staticmethod
     def _allocate_port() -> int:
@@ -125,7 +137,7 @@ class Distributor:
                     "exec": {"allow_paths": [self.ffmpeg_binary]},
                     "ffmpeg": {
                         "bin": self.ffmpeg_binary,
-                        "rtsp": "-allowed_media_types video+audio -rtsp_transport tcp -timeout 5000000 -analyzeduration 100000 -probesize 32768 -threads 2 -i {input}",
+                        "rtsp": f"-allowed_media_types video+audio -rtsp_transport tcp -timeout {COLD_START_TIMEOUT_US} -analyzeduration 100000 -probesize 32768 -threads 2 -i {{input}}",
                         # Preserve input frame cadence and timestamp precision.
                         # Do not synthesize frames to match a guessed FPS.
                         "h264": "-c:v libx264 -preset:v ultrafast -tune:v zerolatency -g:v 15 -threads:v 2 -pix_fmt:v yuv420p -profile:v baseline -fps_mode:v passthrough -enc_time_base:v demux",
@@ -212,6 +224,7 @@ class Distributor:
                     await asyncio.sleep(0.1)
             else:
                 raise RuntimeError("go2rtc API not ready")
+            await self.native.start()
             self._started = True
             self._drain = asyncio.create_task(self._drain_logs())
         except BaseException:
@@ -236,6 +249,9 @@ class Distributor:
         if not self.healthy or camera_id not in self.fences:
             raise RuntimeError("Camera distributor unavailable")
         return f"rtsp://127.0.0.1:{self.fences[camera_id].port}/{self.names[camera_id]}?video"
+
+    def native_url(self, camera_id: str) -> str:
+        return self.native.url(self.names[camera_id])
 
     async def add(self, camera_id: str) -> str:
         camera_id = safe_id(camera_id)
@@ -299,15 +315,18 @@ class Distributor:
             self.relays[camera_id] = relay
             self.fences[camera_id] = fence
             self._output_ports[camera_id] = fence.port
+            self.native.register(name, self.output_url(camera_id))
             return self.output_url(camera_id)
 
     def _invalidate_generation(self, camera_id: str, fence: StreamFence) -> None:
         fence.invalidate()
+        self.native.invalidate(self.names[camera_id])
         if lease := self.warm_leases.get(camera_id):
             lease.fence.invalidate()
 
     def _resume_generation(self, camera_id: str, fence: StreamFence) -> None:
         fence.resume()
+        self.native.resume(self.names[camera_id])
         if lease := self.warm_leases.get(camera_id):
             lease.fence.resume()
 
@@ -331,7 +350,7 @@ class Distributor:
         if (
             relay is None
             or fence is None
-            or fence.clients
+            or self._has_viewers(camera_id, fence)
             or relay.connected_since is None
         ):
             return
@@ -350,18 +369,30 @@ class Distributor:
             for task in tuple(relay.tasks):
                 task.cancel()
 
+    def _has_viewers(self, camera_id: str, fence: StreamFence) -> bool:
+        return bool(fence.clients or self.native.has_clients(self.names[camera_id]))
+
     async def _reclaim_warm_capacity(self, camera_id: str) -> None:
         """A validated real viewer may reclaim one idle warm lease, never a viewer."""
         async with self._lock:
             demand = self.fences.get(camera_id)
-            if demand is None or not demand.clients or not self._admission.locked():
+            if (
+                demand is None
+                or not self._has_viewers(camera_id, demand)
+                or not self._admission.locked()
+            ):
                 return
             for key, lease in tuple(self.warm_leases.items()):
                 if key == camera_id:
                     continue
                 relay = self.relays.get(key)
                 fence = self.fences.get(key)
-                if relay is None or fence is None or fence.clients or not relay.active:
+                if (
+                    relay is None
+                    or fence is None
+                    or self._has_viewers(key, fence)
+                    or not relay.active
+                ):
                     continue
                 # Fence before yielding. The warm worker cannot reopen the
                 # retired generation, and no real viewer is connected to it.
@@ -389,16 +420,19 @@ class Distributor:
                 or not self.relays[camera_id].accepting
             ):
                 return False
-            # Retire expired holders. Only two cameras may have a warm lease,
-            # leaving the third admission slot available for ordinary demand.
+            # Retire expired holders; retain at least one slot outside the
+            # optional warm-only allowance even with a reduced hub budget.
             for key, previous in tuple(self.warm_leases.items()):
                 if previous.task is not None and previous.task.done():
                     await previous.close()
                     self.warm_leases.pop(key)
+            warm_limit = min(MAX_WARM_CAMERAS, self._admission.limit - 1)
             if lease := self.warm_leases.get(camera_id):
+                if len(self.warm_leases) > warm_limit:
+                    return False
                 lease.extend(duration)
                 return True
-            if len(self.warm_leases) >= MAX_WARM_CAMERAS:
+            if len(self.warm_leases) >= warm_limit:
                 return False
             if self._admission.locked() and not self.relays[camera_id].active:
                 return False
@@ -438,6 +472,7 @@ class Distributor:
             if relay is None:
                 return
             try:
+                await self.native.remove(self.names[camera_id])
                 await self.fences.pop(camera_id).close()
                 if self.healthy:
                     await self._request(
@@ -472,6 +507,7 @@ class Distributor:
         self._started = False
         process, self.process = self.process, None
         try:
+            await self.native.close()
             for camera_id in tuple(self.warm_leases):
                 await self._release_warm_locked(camera_id)
             # Stop all downstream consumers first. The shared go2rtc process

@@ -1,6 +1,6 @@
 # Arlo Local for Home Assistant
 
-**Development preview (0.5.0b3). No stable release yet.** This integration is intended for controlled testing. Do not use it as the sole source of evidence for safety-critical automation, including garage-door actuation.
+**Development preview (0.5.0b4). No stable release yet.** This integration is intended for controlled testing. Do not use it as the sole source of evidence for safety-critical automation, including garage-door actuation.
 
 Arlo Local discovers cameras through a compatible Arlo SmartHub and provides Home Assistant camera entities backed by authenticated local video and snapshots. It runs its own isolated go2rtc distributor and does not manage Home Assistant's existing go2rtc instance or replace Aarlo.
 
@@ -24,7 +24,7 @@ Never post account credentials, certificates, keys, tokens or unredacted Home As
 
 ## Video behavior
 
-Each active camera has one upstream authenticated RTSP session; local consumers share its distributed video. The current policy permits up to three active upstreams and up to two warm-only camera leases. Audio, recording management, motion and sound sensors are outside this release. Some camera models, including VMC3060B, have unresolved compatibility issues.
+Each active camera has one upstream authenticated RTSP session; local consumers share its distributed video. Configure the per-hub maximum number of active streams in the integration options (1–5, default 3). The limit applies to new admissions; decreasing it does not interrupt existing viewers. Optional warm-only camera leases are limited to two and by the configured budget. Five simultaneous streams have been demonstrated in short physical trials, not accepted as a sustained operational capacity. Audio, recording management, motion and sound sensors are outside this release. Some camera models, including VMC3060B, have unresolved compatibility issues.
 
 Real video demand may reclaim a slot from an optional warm-only camera, but will not disconnect an established real viewer. If all slots are occupied by actual viewers, additional demand fails rather than exceeding the local limit. Failed upstream startup attempts and repeated warm-worker exits use bounded exponential backoff of 1–15 seconds. This local limit does not account for independent Arlo app, cloud or recording activity; coexistence at the hub's full capacity is not established.
 
@@ -32,13 +32,15 @@ The optional `arlo_local.prewarm` action requests a bounded warm lease on a came
 
 The H.264 encoder preserves input frame timing and does not synthesize frames to match an inferred constant frame rate. This does not eliminate delayed frames arriving from the SmartHub; recording coexistence and natural session rollover remain unaccepted.
 
+The camera entity exposes a loopback-only HTTP MPEG-TS video source to avoid the native HA stream worker's fixed RTSP startup timeout, including when it reuses a cached stream. The internal snapshot path uses the existing normalized RTSP source. HTTP readers stream-copy the normalized H.264 video without additional camera sessions or video encodes. There is a four-reader limit per camera, a ten-second producer socket timeout, a twelve-second first-media deadline for the HTTP path and a separate three-second established-output advancement watchdog. Generation loss closes affected HTTP and RTSP readers. This adds local remux processes and buffers; production resource consumption has not yet been accepted. The new source is not a guarantee of live optical frame age or a network-accessible camera endpoint.
+
 The distributor staggers planned warm-only renewal; real viewers are not proactively interrupted for that renewal. Unexpected stream loss or a detected timeline discontinuity closes affected consumers so they can reopen and recover. A normalized RTP timeline check allows legitimate 32-bit wrap and detects backward timestamps/source changes. It is not proof of the optical age of a frame, and a consuming application must independently enforce freshness and fail closed.
 
 ## Development and verification
 
 The isolated synthetic test suite requires Python 3.14.2, the locked `ha-test` environment, FFmpeg and go2rtc. It uses temporary synthetic certificates and simulated camera endpoints; no live camera credentials are required. See the CI workflow for the reproducible commands. The quality gate requires at least 95% branch coverage in every integration module with branches and complete config-flow coverage.
 
-Physical-camera short recovery tests have passed, including independent and simultaneous stream failures. Long-duration natural rollover, production HA resource load, model compatibility and garage shadow-mode validation remain acceptance gates. See [release notes](CHANGELOG.md).
+Physical-camera short recovery tests have passed, including independent and simultaneous stream failures and rejection of a sixth request before upstream admission followed by recovery after capacity becomes available. Synthetic tests exercise native HA startup and cached-worker recovery with a delayed first frame, as well as concurrent HTTP and RTSP readers. Short single-camera physical HTTP streaming has passed, but sustained five-camera native streaming has not. Long-duration natural rollover, recording coexistence, production HA resource load, model compatibility and garage shadow-mode validation remain acceptance gates. See [release notes](CHANGELOG.md).
 
 ## Attribution and licensing
 

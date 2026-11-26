@@ -30,7 +30,7 @@ def fresh_image(url: str) -> Image.Image | None:
             "analyzeduration": "100000",
             "probesize": "32768",
         },
-        timeout=(6.0, 3.0),
+        timeout=(9.0, 3.0),
     ) as stream:
         video = stream.streams.video[0]
         video.codec_context.thread_count = 2
@@ -113,7 +113,7 @@ class ArloLocalCamera(Camera):
                 )
 
     async def stream_source(self) -> str | None:
-        return await self.runtime.source(self.info.device_id)
+        return await self.runtime.source(self.info.device_id, native=True)
 
     async def async_prewarm(self, duration: int = 90) -> None:
         if not await self.runtime.prewarm(self.info.device_id, duration):
@@ -128,7 +128,7 @@ class ArloLocalCamera(Camera):
         for _ in range(2):
             if not self._capture_waiters:
                 return None
-            url = await self.stream_source()
+            url = await self.runtime.source(self.info.device_id)
             if not url:
                 return None
             try:

@@ -21,11 +21,12 @@ class DistributionAdmissionTests(PackagedTLSTests):
         self.mock.abort_clients()
         await super().asyncTearDown()
 
-    async def make_broker(self):
+    async def make_broker(self, max_streams=3):
         broker = Distributor(
             os.environ["ARLO_POC_GO2RTC"], "127.0.0.1", "hub.local",
             self.context, self.pin, port=self.port,
             ffmpeg_binary=os.environ["ARLO_POC_FFMPEG"],
+            max_streams=max_streams,
         )
         self.broker = broker
         self.clients = []
@@ -70,6 +71,40 @@ class DistributionAdmissionTests(PackagedTLSTests):
             self.assertEqual((await asyncio.wait_for(read_unit(reader), 3)).get("CSeq"), "2")
         await asyncio.wait_for(broker.close(), 6)
         self.assertFalse(broker.relays)
+
+    async def test_five_slot_budget_resize_and_recovery(self):
+        broker=await self.make_broker(5)
+        cameras=[f"cam{i}" for i in range(6)]
+        for camera in cameras:
+            await broker.add(camera)
+        clients=[await self.open_client(c) for c in cameras[:5]]
+        for reader,_ in clients:
+            self.assertEqual((await asyncio.wait_for(read_unit(reader),3)).get("CSeq"),"1")
+        self.assertEqual(broker._admission.in_use,5)
+        self.assertEqual(self.connections,5)
+        async def denied():
+            reader,_=await self.open_client(cameras[5])
+            with self.assertRaises(asyncio.IncompleteReadError):
+                await asyncio.wait_for(read_unit(reader),3)
+            self.assertEqual(broker.relays[cameras[5]].upstream_sessions,0)
+        await denied()
+        broker.resize_capacity(3)
+        await denied()
+        self.assertEqual(self.connections,5)
+        for reader,writer in clients:
+            writer.write(Message("OPTIONS * RTSP/1.0",[("CSeq","2")]).encode())
+            await writer.drain()
+            self.assertEqual((await asyncio.wait_for(read_unit(reader),3)).get("CSeq"),"2")
+        for camera in cameras[:3]:
+            await broker.remove(camera)
+        self.assertEqual(broker._admission.in_use,2)
+        reader,_=await self.open_client(cameras[5])
+        self.assertEqual((await asyncio.wait_for(read_unit(reader),3)).get("CSeq"),"1")
+        self.assertEqual(self.connections,6)
+        self.assertEqual(broker._admission.in_use,3)
+        self.assertTrue(all(broker.relays[c].active for c in cameras[3:]))
+        await broker.close()
+        self.assertEqual(broker._admission.in_use,0)
 
     async def test_active_relay_close_terminates_client_before_waiting_for_server(self):
         broker = await self.make_broker()

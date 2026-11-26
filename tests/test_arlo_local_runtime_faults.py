@@ -63,6 +63,13 @@ class RuntimeFaultTests(IsolatedAsyncioTestCase):
     def issue(self,key):
         return (mod.DOMAIN,self.entry.entry_id+"_"+key) in ir.async_get(self.hass).issues
 
+    async def test_options_update_without_broker_and_with_broker(self):
+        self.hass.config_entries.async_update_entry(self.entry,options={"max_streams":5})
+        await self.rt.update_options(self.hass,self.entry)
+        self.broker.resize_capacity.assert_called_once_with(5)
+        self.rt.broker=None
+        await self.rt.update_options(self.hass,self.entry)
+
     async def test_prewarm_respects_source_and_credential_maintenance(self):
         self.assertFalse(await self.rt.prewarm("unknown",90))
         with patch.object(self.rt,"source",new_callable=AsyncMock,return_value="rtsp://test"):

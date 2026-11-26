@@ -46,6 +46,7 @@
       "unique_id_mismatch": "The selected SmartHub does not match the configured device."
     }
   },
+  "options": {"step": {"init": {"title": "Local streaming capacity", "description": "Set the maximum number of simultaneous upstream camera connections for this SmartHub. Three is recommended until sustained operation is verified. Reducing the limit does not stop current viewers; new connections are rejected until capacity is available.", "data": {"max_streams": "Maximum concurrent cameras"}}}},
   "services": {
     "prewarm": {
       "name": "Prewarm camera",

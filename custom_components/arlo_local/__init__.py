@@ -66,6 +66,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry[Runtime]) ->
         )
         runtime.hub_registry_id = hub_device.id
         await hass.config_entries.async_forward_entry_setups(entry, [Platform.CAMERA])
+        entry.async_on_unload(entry.add_update_listener(runtime.update_options))
         entry.async_on_unload(
             hass.async_add_shutdown_job(HassJob(runtime.close, "Arlo Local shutdown"))
         )

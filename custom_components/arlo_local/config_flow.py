@@ -8,11 +8,17 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import probatio
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
+from .budget import CONF_MAX_STREAMS, MAX_STREAMS, stream_budget
 from .const import DOMAIN, PORT
 from .inventory import safe_id
 from .manual_mfa import ManualMFA
@@ -74,6 +80,11 @@ def credential_config(values: Mapping[str, object]) -> dict[str, str]:
 
 class ArloLocalConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return ArloLocalOptionsFlow()
 
     def __init__(self) -> None:
         self.endpoint: dict[str, str] = {}
@@ -436,3 +447,27 @@ class ArloLocalConfigFlow(ConfigFlow, domain=DOMAIN):
             )
         self._job = None
         return await self.async_step_user()
+
+
+class ArloLocalOptionsFlow(OptionsFlow):
+    """Local settings only; the existing config-entry listener applies them."""
+
+    async def async_step_init(
+        self, user_input: dict[str, object] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            limit = stream_budget(user_input)
+            return self.async_create_entry(
+                title="", data={**self.config_entry.options, CONF_MAX_STREAMS: limit}
+            )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Required(
+                        CONF_MAX_STREAMS,
+                        default=stream_budget(self.config_entry.options),
+                    ): probatio.In(list(range(1, MAX_STREAMS + 1)))
+                }
+            ),
+        )

@@ -1,6 +1,6 @@
 """Verify that diagnostic exports are restricted to non-secret operational state."""
 import json
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 import tempfile
 import unittest
 
@@ -30,6 +30,12 @@ class DiagnosticTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["camera_count"],1)
                 self.assertEqual(result["camera_models"],["VMC2030B"])
                 self.assertEqual(result["camera_interface_versions"],[{"model":"VMC2030B","interface_version":"i002"}])
+                runtime.broker=SimpleNamespace(healthy=True,relays={"secret-camera":SimpleNamespace(connected_since=1.0),"pending":SimpleNamespace(connected_since=None)},admitted_count=2,native=SimpleNamespace(clients={"secret-camera":{1:object()}}),warm_leases={},fences={"secret-camera":SimpleNamespace(stalls=1)})
+                result=await async_get_config_entry_diagnostics(hass,entry)
+                self.assertEqual(result["active_upstream_count"],1)
+                self.assertEqual(result["admitted_stream_count"],2)
+                self.assertEqual(result["native_reader_count"],1)
+                self.assertEqual(result["output_stalls"],1)
                 serialized=json.dumps(result)
                 for forbidden in ("secret","private","192.0.2.42","password","username"):
                     self.assertNotIn(forbidden,serialized)

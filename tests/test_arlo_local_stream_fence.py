@@ -2,6 +2,7 @@
 
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from custom_components.arlo_local.rtsp_transport import Message, close_writer, read_unit
 from custom_components.arlo_local.stream_fence import StreamFence
@@ -13,6 +14,7 @@ class StreamFenceTests(unittest.IsolatedAsyncioTestCase):
         self.backend_clients = set()
         self.requests = []
         self.inject_reset = False
+        self.inject_stall = False
 
         async def backend(reader, writer):
             self.backend_clients.add(writer)
@@ -23,6 +25,10 @@ class StreamFenceTests(unittest.IsolatedAsyncioTestCase):
                         self.requests.append(msg.start)
                         if self.inject_reset and msg.start.startswith("SETUP "):
                             writer.write(setup().encode()+rtp(100)+rtp(200)+rtp(50))
+                            await writer.drain()
+                            continue
+                        if self.inject_stall and msg.start.startswith("SETUP "):
+                            writer.write(setup().encode()+rtp(100)+rtp(100))
                             await writer.drain()
                             continue
                         writer.write(Message("RTSP/1.0 200 OK", [("CSeq", msg.get("CSeq"))]).encode())
@@ -84,6 +90,21 @@ class StreamFenceTests(unittest.IsolatedAsyncioTestCase):
         reader, _ = await self.client("one", "two")
         self.assertEqual(await asyncio.wait_for(reader.read(), 2), b"")
         self.assertEqual(self.requests, [])
+
+    async def test_established_video_stall_closes_only_affected_consumer(self):
+        first,other=await asyncio.gather(self.client("one"),self.client("two"))
+        for r,_ in (first,other):await asyncio.wait_for(read_unit(r),2)
+        fence=self.fences["one"]
+        self.inject_stall=True
+        with patch("custom_components.arlo_local.stream_fence.ESTABLISHED_VIDEO_TIMEOUT",.05):
+            first[1].write(Message(f"SETUP rtsp://127.0.0.1:{fence.port}/one/trackID=0 RTSP/1.0",[("CSeq","2")]).encode())
+            await first[1].drain()
+            data=await asyncio.wait_for(first[0].read(),2)
+        self.assertIn(rtp(100),data)
+        self.assertEqual(fence.stalls,1)
+        self.assertFalse(fence.blocked)
+        other[1].write(Message("OPTIONS * RTSP/1.0",[("CSeq","3")]).encode());await other[1].drain()
+        self.assertEqual((await asyncio.wait_for(read_unit(other[0]),2)).get("CSeq"),"3")
 
     async def test_same_socket_timestamp_reset_closes_camera_viewers(self):
         first,second,other=await asyncio.gather(self.client("one"),self.client("one"),self.client("two"))

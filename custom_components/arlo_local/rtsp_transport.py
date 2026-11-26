@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from .budget import AdmissionBudget
 from .retry import RetryBackoff
 
 HEADER_LIMIT = 65536
@@ -212,7 +213,7 @@ class Relay:
         *,
         playback_authorized: bool = False,
         codec: str = "avc",
-        admission: asyncio.BoundedSemaphore | None = None,
+        admission: asyncio.BoundedSemaphore | AdmissionBudget | None = None,
         on_ending: Callable[[], None] | None = None,
         on_ended: Callable[[], None] | None = None,
         on_capacity: Callable[[], Awaitable[None]] | None = None,

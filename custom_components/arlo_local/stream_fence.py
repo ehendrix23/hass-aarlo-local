@@ -9,6 +9,7 @@ import asyncio
 from collections.abc import Callable
 from urllib.parse import urlsplit
 
+from .const import ESTABLISHED_VIDEO_TIMEOUT
 from .rtsp_transport import (
     HEADER_LIMIT,
     METHODS,
@@ -36,6 +37,7 @@ class StreamFence:
         self.blocked = False
         self.on_timeline_fault = on_timeline_fault
         self.timeline_faults = 0
+        self.stalls = 0
         self.clients: dict[asyncio.Task[None], list[asyncio.StreamWriter]] = {}
 
     async def start(self) -> None:
@@ -145,15 +147,34 @@ class StreamFence:
 
             async def downstream() -> None:
                 timeline = VideoTimeline()
+                clock = asyncio.get_running_loop().time
+                deadline: float | None = None
                 # Inspect only the RTP headers at the normalized video boundary.
                 # No frame decoding, retention or unbounded queue.
                 while True:
-                    unit = await read_unit(backend_reader)
+                    try:
+                        if deadline is None:
+                            unit = await read_unit(backend_reader)
+                        else:
+                            remaining = deadline - clock()
+                            if remaining <= 0:
+                                raise TimeoutError
+                            unit = await asyncio.wait_for(
+                                read_unit(backend_reader), remaining
+                            )
+                    except TimeoutError:
+                        # A single stalled/slow consumer does not justify
+                        # disconnecting other independently progressing readers.
+                        self.stalls += 1
+                        return
                     if isinstance(unit, Message):
                         timeline.response(unit)
                         payload = unit.encode()
                     else:
+                        previous = timeline.timestamp
                         timeline.packet(unit)
+                        if timeline.timestamp != previous:
+                            deadline = clock() + ESTABLISHED_VIDEO_TIMEOUT
                         payload = unit
                     writer.write(payload)
                     await asyncio.wait_for(writer.drain(), TIMEOUT)

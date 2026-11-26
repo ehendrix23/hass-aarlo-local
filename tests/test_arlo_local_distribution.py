@@ -135,6 +135,76 @@ class SharedStreamTests(DecoderTest):
                     proc.kill()
                     await proc.communicate()
 
+    async def test_native_http_and_rtsp_share_producer_and_generation(self):
+        ffmpeg=await self._video_fixture()
+        self.frame_count=400
+        broker=Distributor(os.environ["ARLO_POC_GO2RTC"],"127.0.0.1","hub.local",self.context,self.pin,port=self.port,ffmpeg_binary=ffmpeg)
+        self.addAsyncCleanup(broker.close)
+        rtsp=await broker.add("cam")
+        http=broker.native_url("cam")
+        relay=broker.relays["cam"]
+        self.assertEqual(self.connections,0)
+        for generation in (1,2):
+            viewers=[]
+            try:
+                for source,options in ((http,["-rw_timeout","10000000"]),(rtsp,["-rtsp_transport","tcp","-timeout","10000000"])):
+                    p=await asyncio.create_subprocess_exec(ffmpeg,"-nostdin","-v","error",*options,"-analyzeduration","100000","-probesize","32768","-i",source,"-an","-pix_fmt","rgb24","-fps_mode","passthrough","-f","rawvideo","pipe:1",stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL)
+                    viewers.append(p)
+                await asyncio.gather(*(asyncio.wait_for(p.stdout.readexactly(160*120*3*3),15) for p in viewers))
+                self.assertEqual(relay.upstream_sessions,generation)
+                self.assertEqual(broker._admission.in_use,1)
+                self.assertTrue(broker.native.has_clients(broker.names["cam"]))
+                task=next(iter(relay.tasks));task.cancel()
+                await asyncio.wait_for(asyncio.gather(task,return_exceptions=True),4)
+                await asyncio.gather(*(asyncio.wait_for(p.communicate(),5) for p in viewers))
+                async with asyncio.timeout(4):
+                    while broker.native.has_clients(broker.names["cam"]):await asyncio.sleep(.05)
+                self.assertFalse(relay.active)
+                self.assertEqual(broker._admission.in_use,0)
+                self.assertEqual(broker.native_url("cam"),http)
+                self.assertEqual(broker.output_url("cam"),rtsp)
+            finally:
+                for p in viewers:
+                    if p.returncode is None:p.kill()
+                    await p.communicate()
+        self.assertEqual(self.connections,2)
+
+    async def test_external_go2rtc_http_consumer_after_delayed_start(self):
+        class ExternalConsumer(Distributor):
+            def _prepare_directory(self):
+                directory=super()._prepare_directory()
+                path=Path(directory.name)/"go2rtc.yaml"
+                config=json.loads(path.read_text())
+                # Same HTTP producer module enabled by HA's managed go2rtc.
+                config["app"]["modules"].append("http")
+                path.write_text(json.dumps(config))
+                return directory
+        ffmpeg=await self._video_fixture()
+        self.video_start_delay=6.2
+        self.frame_count=250
+        args=(os.environ["ARLO_POC_GO2RTC"],"127.0.0.1","hub.local",self.context,self.pin)
+        original=Distributor(*args,port=self.port,ffmpeg_binary=ffmpeg)
+        self.addAsyncCleanup(original.close)
+        consumer=ExternalConsumer(*args,port=self.port,ffmpeg_binary=ffmpeg)
+        self.addAsyncCleanup(consumer.close)
+        await original.add("cam")
+        await consumer.start()
+        await consumer._request("PUT","/api/streams",{"name":"synthetic","src":original.native_url("cam")})
+        url=f"rtsp://127.0.0.1:{consumer.rtsp_port}/synthetic?video"
+        p=await asyncio.create_subprocess_exec(ffmpeg,"-nostdin","-v","error","-rtsp_transport","tcp","-timeout","15000000","-analyzeduration","100000","-probesize","32768","-i",url,"-frames:v","3","-an","-pix_fmt","rgb24","-f","rawvideo","pipe:1",stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+        try:
+            data,err=await asyncio.wait_for(p.communicate(),20)
+            self.assertEqual(p.returncode,0,err.decode())
+            self.assertEqual(len(data),160*120*3*3)
+            self.assertEqual(original.relays["cam"].upstream_sessions,1)
+            self.assertEqual(self.connections,1)
+        finally:
+            if p.returncode is None:p.kill()
+            await p.communicate()
+        await consumer.close()
+        async with asyncio.timeout(6):
+            while original.relays["cam"].active:await asyncio.sleep(.05)
+
     async def test_warm_lease_rollover_and_release(self):
         ffmpeg = await self._video_fixture()
         broker = Distributor(os.environ["ARLO_POC_GO2RTC"], "127.0.0.1", "hub.local",

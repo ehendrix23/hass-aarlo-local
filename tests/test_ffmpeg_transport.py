@@ -22,6 +22,7 @@ class DecoderTest(TLSTests):
         session = "synthetic-session"
         async def send_video():
             nonlocal seq
+            await asyncio.sleep(getattr(self,"video_start_delay",0))
             for frame_no in range(getattr(self,"frame_count",12)):
                 # Each generated access unit is a single IDR plus repeated SPS/PPS.
                 for nal_no, nal in enumerate(self.nals):

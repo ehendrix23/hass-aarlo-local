@@ -3,6 +3,7 @@
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .budget import stream_budget
 from .const import VERSION
 from .runtime import Runtime
 
@@ -24,7 +25,20 @@ async def async_get_config_entry_diagnostics(
         {
             "local_available": runtime.available,
             "camera_count": len(runtime.cameras),
-            "active_upstream_count": sum(r.active for r in broker.relays.values())
+            "max_streams": stream_budget(entry.options),
+            "active_upstream_count": sum(
+                r.connected_since is not None for r in broker.relays.values()
+            )
+            if broker
+            else 0,
+            "admitted_stream_count": broker.admitted_count if broker else 0,
+            "native_reader_count": sum(
+                len(readers) for readers in broker.native.clients.values()
+            )
+            if broker
+            else 0,
+            "warm_lease_count": len(broker.warm_leases) if broker else 0,
+            "output_stalls": sum(fence.stalls for fence in broker.fences.values())
             if broker
             else 0,
             "registered_stream_count": len(broker.relays) if broker else 0,

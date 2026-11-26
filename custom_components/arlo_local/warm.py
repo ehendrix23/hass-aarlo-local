@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from contextlib import suppress
 
+from .const import COLD_START_TIMEOUT_US
 from .retry import RetryBackoff
 from .stream_fence import StreamFence
 
@@ -50,7 +51,7 @@ class WarmLease:
                             "-rtsp_transport",
                             "tcp",
                             "-timeout",
-                            "5000000",
+                            str(COLD_START_TIMEOUT_US),
                             "-analyzeduration",
                             "100000",
                             "-probesize",

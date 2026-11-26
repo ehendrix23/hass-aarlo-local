@@ -107,6 +107,16 @@ class LifecycleTests(DecoderTest):
                     self.assertEqual(camera_device.via_device_id, hub_device.id)
                     entity_id = er.async_get(hass).async_get_entity_id("camera", "arlo_local", "test-hub_camera-one")
                     self.assertIsNotNone(entity_id)
+                    self.assertEqual(original_runtime.broker._admission.limit,3)
+                    flow = await hass.config_entries.options.async_init(entry.entry_id)
+                    self.assertEqual(flow["type"],"form")
+                    self.assertEqual(flow["step_id"],"init")
+                    result = await hass.config_entries.options.async_configure(flow["flow_id"],{"max_streams":5})
+                    self.assertEqual(result["type"],"create_entry")
+                    await hass.async_block_till_done()
+                    self.assertIs(entry.runtime_data,original_runtime)
+                    self.assertEqual(original_runtime.broker._admission.limit,5)
+                    self.assertEqual(entry.options["max_streams"],5)
                     self.assertTrue(hass.services.has_service("arlo_local", "prewarm"))
                     self.assertTrue(hass.services.has_service("arlo_local", "release_prewarm"))
                     # The synthetic certificate lasts one day, so maintenance
@@ -126,6 +136,40 @@ class LifecycleTests(DecoderTest):
                     self.assertEqual(Image.open(BytesIO(resized.content)).size,(80,60))
                     await hass.services.async_call("arlo_local", "release_prewarm", {"entity_id": entity_id}, blocking=True)
                     self.assertFalse(original_runtime.broker.warm_leases)
+                    # Actual HA camera source and cached stream worker, not a
+                    # custom consumer. Wait until the previous producer is idle.
+                    from homeassistant.components.camera.helper import get_camera_from_entity_id
+                    async with asyncio.timeout(8):
+                        while original_runtime.broker.relays["cam"].active:
+                            await asyncio.sleep(.05)
+                    self.video_start_delay=6.2
+                    self.frame_count=300
+                    camera=get_camera_from_entity_id(hass,entity_id)
+                    native=await camera.async_create_stream()
+                    self.assertIsNotNone(native)
+                    self.assertTrue(native.source.startswith("http://127.0.0.1:"))
+                    sessions=original_runtime.broker.relays["cam"].upstream_sessions
+                    for generation in (1,3):
+                        self.assertIs(await camera.async_create_stream(),native)
+                        provider=native.add_provider("hls")
+                        await native.start()
+                        async with asyncio.timeout(20):
+                            while not provider.get_segments():await asyncio.sleep(.1)
+                        self.assertEqual(original_runtime.broker.relays["cam"].upstream_sessions,sessions+generation)
+                        self.assertTrue(original_runtime.broker.native.has_clients(original_runtime.broker.names["cam"]))
+                        if generation==1:
+                            old_stream_id=provider.get_segments()[-1].stream_id
+                            relay=original_runtime.broker.relays["cam"]
+                            task=next(iter(relay.tasks));task.cancel()
+                            await asyncio.gather(task,return_exceptions=True)
+                            async with asyncio.timeout(30):
+                                while not (relay.upstream_sessions==sessions+2 and any(s.stream_id>old_stream_id and s.data_size>0 for s in provider.get_segments())):
+                                    await asyncio.sleep(.1)
+                            self.assertIs(await camera.async_create_stream(),native)
+                        await native.stop()
+                        async with asyncio.timeout(8):
+                            while original_runtime.broker.relays["cam"].active:await asyncio.sleep(.05)
+                    self.video_start_delay=0
                     # Real device-registry metadata reconciliation preserves
                     # the user's chosen name and the entity ID.
                     device_registry.async_update_device(camera_device.id,name_by_user="My camera")
@@ -139,6 +183,7 @@ class LifecycleTests(DecoderTest):
                     self.assertEqual(entry.state, ConfigEntryState.LOADED)
                     self.assertIsNone(original_runtime.broker.process)
                     self.assertIsNot(original_runtime, entry.runtime_data)
+                    self.assertEqual(entry.runtime_data.broker._admission.limit,5)
                     self.assertEqual(er.async_get(hass).async_get_entity_id("camera", "arlo_local", "test-hub_camera-one"), entity_id)
                     current_runtime = entry.runtime_data
                     from custom_components.arlo_local import async_remove_config_entry_device

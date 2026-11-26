@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from zeroconf.asyncio import AsyncServiceInfo
 
+from .budget import stream_budget
 from .const import DOMAIN, INVENTORY_INTERVAL, PORT, RENEW_DAYS, SERVICE_TYPE
 from .distribution import Distributor
 from .inventory import CameraInfo, Hub, reconcile
@@ -234,6 +235,7 @@ class Runtime:
                     pin,
                     port=PORT,
                     ffmpeg_binary=self._ffmpeg_binary,
+                    max_streams=stream_budget(self.entry.options),
                 )
             else:
                 self.broker.context, self.broker.pin = context, pin
@@ -245,7 +247,15 @@ class Runtime:
             self._connection_state(True)
             self.notify()
 
-    async def source(self, camera_id: str) -> str | None:
+    async def update_options(
+        self, hass: HomeAssistant, entry: ConfigEntry[Runtime]
+    ) -> None:
+        """Apply local streaming options without restart or owner authentication."""
+        async with self._lock:
+            if self.broker is not None:
+                self.broker.resize_capacity(stream_budget(entry.options))
+
+    async def source(self, camera_id: str, *, native: bool = False) -> str | None:
         if camera_id not in self.cameras or self._stopping:
             return None
         try:
@@ -255,7 +265,11 @@ class Runtime:
                     return None
                 if self.broker is None:
                     return None
-                return self.broker.output_url(camera_id)
+                return (
+                    self.broker.native_url(camera_id)
+                    if native
+                    else self.broker.output_url(camera_id)
+                )
         except LOCAL_ERRORS:
             if not self.broker or not self.broker.healthy:
                 self._connection_state(False)

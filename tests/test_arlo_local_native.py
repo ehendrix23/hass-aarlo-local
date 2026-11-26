@@ -80,8 +80,10 @@ class NativeRuntimeTests(DecoderTest):
                     self.assertEqual(entity.supported_features,CameraEntityFeature.STREAM)
                     self.assertEqual(entity.unique_id,"test-hub_camera-one")
                     entity.hass=hass
-                    url=await entity.stream_source()
-                    self.assertEqual(url,await entity.stream_source())
+                    url=await rt.source("cam")
+                    native_url=await entity.stream_source()
+                    self.assertTrue(native_url.startswith("http://127.0.0.1:"))
+                    self.assertEqual(native_url,await entity.stream_source())
                     # Startup probes use TLS but no video. Count only new sessions.
                     await asyncio.sleep(.05)
                     before=self.connections
@@ -114,11 +116,11 @@ class NativeRuntimeTests(DecoderTest):
                     self.assertTrue(entity.has_entity_name)
                     self.assertIsNone(entity.name)
                     self.assertEqual(entity.device_info.name,"Arlo Local Renamed")
-                    self.assertEqual(await entity.stream_source(),url)
+                    self.assertEqual(await entity.stream_source(),native_url)
                     self.assertGreaterEqual(len(counts),2)
                     second=next(e for e in entities if e.info.device_id=="cam2")
                     self.assertTrue(second.available)
-                    self.assertNotEqual(await second.stream_source(),url)
+                    self.assertNotEqual(await second.stream_source(),native_url)
                     current.pop("cam")
                     async with asyncio.timeout(5):
                         while entity.available:await asyncio.sleep(.05)

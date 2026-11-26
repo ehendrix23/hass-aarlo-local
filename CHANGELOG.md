@@ -1,5 +1,14 @@
 # Release notes
 
+## 0.5.0b4 — development preview
+
+- Add persistent per-hub admission options (1–5, default 3), non-preemptive limit changes and budget-aware warm-only leases.
+- Reject excess demand without opening another SmartHub connection. In a short physical normalized-stream trial, five cameras continued advancing during rejection of a sixth request; the rejected camera was admitted after one viewer left.
+- Provide a bounded loopback HTTP MPEG-TS stream-copy source for native Home Assistant startup and cached-worker recovery, retaining the normalized RTSP snapshot and timeline-validation path. Each camera allows up to four HTTP readers; no additional encoding or camera session is needed for each reader.
+- Separate producer startup and established-output deadlines. Add reader cancellation, process cleanup, stream-generation isolation, native HLS restart and shared HTTP/RTSP regression tests.
+- Report configured capacity, admitted and authenticated streams, native readers, warm leases and output stalls separately in allowlisted diagnostics.
+- Sustained five-camera operation, natural rollover, external recording coexistence and production resource use remain unaccepted. Physical HTTP tests include successful short streams and an upstream delayed-frame failure; the new transport does not eliminate upstream camera delays. No production acceptance or actuation authorization.
+
 ## 0.5.0b3 — development preview
 
 - Preserve source frame cadence and demuxer time base during H.264 normalization rather than synthesize constant-rate frames.
