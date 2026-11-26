@@ -45,3 +45,29 @@ jobs:
         with:
           persist-credentials: false
       - uses: home-assistant/actions/hassfest@9e9565e68f5a70d874202871f4c4064d23814235
+  core-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Test against the actual released Core image (amd64)
+        run: |
+          docker run --rm --platform linux/amd64 \
+            --volume "$PWD:/checkout:ro" --entrypoint /bin/sh \
+            ghcr.io/home-assistant/amd64-homeassistant@sha256:fbbd521bd989893b6c350877d17e1eb1126b6a1bfb715c28e6945f1c82ae0093 -ec '
+              python -c "from importlib.metadata import version; assert version(\"homeassistant\") == \"2026.11.3\""
+              go2rtc --version
+              ffmpeg -version
+              ffmpeg -hide_banner -encoders 2>/dev/null | grep libx264
+              uv pip install --system --constraint /usr/src/homeassistant/homeassistant/package_constraints.txt pyaarlo==0.8.0.27 coverage==7.17.5
+              mkdir -p /tmp/arlo-test
+              cp -R /checkout/custom_components /checkout/tests /checkout/ha-test /checkout/scripts /checkout/hacs.json /checkout/README.md /tmp/arlo-test/
+              cd /tmp/arlo-test
+              mkdir -p ha-test/bin
+              ln -s "$(command -v go2rtc)" ha-test/bin/go2rtc
+              ln -s "$(command -v ffmpeg)" ha-test/bin/ffmpeg
+              python scripts/validate_package.py
+              python ha-test/regression.py
+            '
