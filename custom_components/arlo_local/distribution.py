@@ -126,7 +126,9 @@ class Distributor:
                     "ffmpeg": {
                         "bin": self.ffmpeg_binary,
                         "rtsp": "-allowed_media_types video+audio -rtsp_transport tcp -timeout 5000000 -analyzeduration 100000 -probesize 32768 -threads 2 -i {input}",
-                        "h264": "-c:v libx264 -preset:v ultrafast -tune:v zerolatency -g:v 15 -threads:v 2 -pix_fmt:v yuv420p -profile:v baseline",
+                        # Preserve input frame cadence and timestamp precision.
+                        # Do not synthesize frames to match a guessed FPS.
+                        "h264": "-c:v libx264 -preset:v ultrafast -tune:v zerolatency -g:v 15 -threads:v 2 -pix_fmt:v yuv420p -profile:v baseline -fps_mode:v passthrough -enc_time_base:v demux",
                     },
                     "streams": {},
                 }

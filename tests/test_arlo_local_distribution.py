@@ -16,10 +16,10 @@ class SharedStreamTests(DecoderTest):
     # Unlike the direct one-frame test, the encoder must keep receiving
     # frames through initial probing and two downstream joins.
     frame_count=150
-    async def _video_fixture(self):
+    async def _video_fixture(self, nominal_rate=5):
         ffmpeg=os.environ["ARLO_POC_FFMPEG"]
         proc=await asyncio.create_subprocess_exec(ffmpeg,"-v","error","-f","lavfi",
-                "-i","color=c=black:s=160x120:r=5","-frames:v","1","-c:v","libx264",
+                "-i",f"color=c=black:s=160x120:r={nominal_rate}","-frames:v","1","-c:v","libx264",
                 "-preset","ultrafast","-tune","zerolatency","-x264-params",
                 "keyint=1:repeat-headers=1","-f","h264","pipe:1",
                 stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
@@ -28,6 +28,38 @@ class SharedStreamTests(DecoderTest):
         self.nals=[n for n in re.split(b"\\x00\\x00(?:\\x00)?\\x01",raw) if n]
         self.sprop=",".join(base64.b64encode(next(n for n in self.nals if n[0]&31==t)).decode() for t in (7,8))
         return ffmpeg
+
+    async def test_normalizer_preserves_variable_rate_source_frames(self):
+        # A high nominal rate and a burst of tightly spaced initial RTP
+        # timestamps must not cause the normalizer to synthesize hundreds of
+        # frames when later source timestamps advance at a normal cadence.
+        self.frame_count=70
+        self.video_interval=.035
+        self.video_timestamp=lambda n: n*90 if n<10 else 900+(n-10)*3000
+        ffmpeg=await self._video_fixture(nominal_rate=1000)
+        broker=Distributor(os.environ["ARLO_POC_GO2RTC"],"127.0.0.1","hub.local",self.context,self.pin,port=self.port,ffmpeg_binary=ffmpeg)
+        self.addAsyncCleanup(broker.close)
+        url=await broker.add("cam")
+        proc=await asyncio.create_subprocess_exec(ffmpeg,"-nostdin","-v","error","-rtsp_transport","tcp","-timeout","5000000","-analyzeduration","100000","-probesize","32768","-i",url,"-an","-pix_fmt","rgb24","-fps_mode","passthrough","-frames:v","90","-f","rawvideo","pipe:1",stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL)
+        decoded=0
+        async def consume():
+            nonlocal decoded
+            while chunk:=await proc.stdout.read(65536):
+                decoded+=len(chunk)
+        task=asyncio.create_task(consume())
+        try:
+            async with asyncio.timeout(10):
+                while not task.done() and getattr(self,"video_sent",0)<self.frame_count:
+                    await asyncio.sleep(.05)
+                await asyncio.sleep(.5)
+            frames=decoded//(160*120*3)
+            self.assertGreaterEqual(frames,15,(frames,getattr(self,"video_sent",0)))
+            self.assertLessEqual(frames,getattr(self,"video_sent",0),(frames,getattr(self,"video_sent",0)))
+            self.assertEqual(broker.relays["cam"].upstream_sessions,1)
+        finally:
+            if proc.returncode is None:proc.kill()
+            await proc.wait()
+            await task
 
     async def test_two_consumers_one_hub_connection(self):
         ffmpeg = await self._video_fixture()
@@ -43,6 +75,8 @@ class SharedStreamTests(DecoderTest):
         # go2rtc appends its stream YAML to the original JSON-compatible config.
         config,_=json.JSONDecoder().raw_decode((Path(broker.directory.name)/"go2rtc.yaml").read_text())
         self.assertIn("-allowed_media_types video+audio ",config["ffmpeg"]["rtsp"])
+        self.assertIn("-fps_mode:v passthrough",config["ffmpeg"]["h264"])
+        self.assertIn("-enc_time_base:v demux",config["ffmpeg"]["h264"])
         stream=await broker.stats("cam")
         self.assertEqual(len(stream["producers"]),1)
         self.assertTrue(stream["producers"][0]["url"].endswith("#video=h264"))

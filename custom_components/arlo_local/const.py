@@ -1,5 +1,5 @@
 DOMAIN = "arlo_local"
-VERSION = "0.5.0b2"
+VERSION = "0.5.0b3"
 SERVICE_TYPE = "_arlo-video._tcp.local."
 PORT = 554
 INVENTORY_INTERVAL = 15 * 60

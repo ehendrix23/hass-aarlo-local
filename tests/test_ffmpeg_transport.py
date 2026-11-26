@@ -39,12 +39,14 @@ class DecoderTest(TLSTests):
                             parts.append(bytes((indicator, flags|typ))+chunk)
                     for i, part in enumerate(parts):
                         marker = nal_no == len(self.nals)-1 and i == len(parts)-1
+                        timestamp = self.video_timestamp(frame_no) if hasattr(self, "video_timestamp") else frame_no*18000
                         packet = struct.pack("!BBHII", 0x80, 96|(0x80 if marker else 0),
-                                             seq & 0xFFFF, frame_no*18000, ssrc)+part
+                                             seq & 0xFFFF, timestamp, ssrc)+part
                         writer.write(b"$\x00"+len(packet).to_bytes(2,"big")+packet)
                         seq += 1
                 await writer.drain()
-                await asyncio.sleep(0.08)
+                self.video_sent = getattr(self,"video_sent",0)+1
+                await asyncio.sleep(getattr(self,"video_interval",0.08))
         video_task = None
         try:
             while True:

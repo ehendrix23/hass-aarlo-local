@@ -1,6 +1,6 @@
 # Arlo Local for Home Assistant
 
-**Development preview (0.5.0b2). No stable release yet.** This integration is intended for controlled testing. Do not use it as the sole source of evidence for safety-critical automation, including garage-door actuation.
+**Development preview (0.5.0b3). No stable release yet.** This integration is intended for controlled testing. Do not use it as the sole source of evidence for safety-critical automation, including garage-door actuation.
 
 Arlo Local discovers cameras through a compatible Arlo SmartHub and provides Home Assistant camera entities backed by authenticated local video and snapshots. It runs its own isolated go2rtc distributor and does not manage Home Assistant's existing go2rtc instance or replace Aarlo.
 
@@ -29,6 +29,8 @@ Each active camera has one upstream authenticated RTSP session; local consumers 
 Real video demand may reclaim a slot from an optional warm-only camera, but will not disconnect an established real viewer. If all slots are occupied by actual viewers, additional demand fails rather than exceeding the local limit. Failed upstream startup attempts and repeated warm-worker exits use bounded exponential backoff of 1–15 seconds. This local limit does not account for independent Arlo app, cloud or recording activity; coexistence at the hub's full capacity is not established.
 
 The optional `arlo_local.prewarm` action requests a bounded warm lease on a camera entity. `duration` is 5–120 seconds (default 90). This does not assert that video is ready. `arlo_local.release_prewarm` releases the warm lease without stopping independent viewers. No automatic warming is enabled by default.
+
+The H.264 encoder preserves input frame timing and does not synthesize frames to match an inferred constant frame rate. This does not eliminate delayed frames arriving from the SmartHub; recording coexistence and natural session rollover remain unaccepted.
 
 The distributor staggers planned warm-only renewal; real viewers are not proactively interrupted for that renewal. Unexpected stream loss or a detected timeline discontinuity closes affected consumers so they can reopen and recover. A normalized RTP timeline check allows legitimate 32-bit wrap and detects backward timestamps/source changes. It is not proof of the optical age of a frame, and a consuming application must independently enforce freshness and fail closed.
 

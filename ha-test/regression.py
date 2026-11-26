@@ -14,6 +14,7 @@ TESTS=[
     "test_arlo_local_inventory",
     "test_arlo_local_owner_session",
     "test_arlo_local_distribution.SharedStreamTests.test_two_consumers_one_hub_connection",
+    "test_arlo_local_distribution.SharedStreamTests.test_normalizer_preserves_variable_rate_source_frames",
     "test_arlo_local_distribution.SharedStreamTests.test_repeated_upstream_loss_fences_actual_decoder",
     "test_arlo_local_distribution.SharedStreamTests.test_warm_lease_rollover_and_release",
     "test_arlo_local_distribution.SharedStreamTests.test_real_demand_reclaims_only_warm_only_capacity",

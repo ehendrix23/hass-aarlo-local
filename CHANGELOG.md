@@ -1,5 +1,11 @@
 # Release notes
 
+## 0.5.0b3 — development preview
+
+- Preserve source frame cadence and demuxer time base during H.264 normalization rather than synthesize constant-rate frames.
+- Exercise variable-rate input through the actual TLS/RTSP relay and FFmpeg distributor, including frame-count bounds.
+- A corrected physical single-camera stream completed a two-minute duration test without decoder errors or excessive relative lag. Upstream delays during external camera activity remain unresolved; recording coexistence, natural session rollover, production load, and garage shadow-mode gates remain open.
+
 ## 0.5.0b2 — development preview
 
 - Actual video requests can reclaim an occupied warm-only camera slot; real viewers remain protected.
