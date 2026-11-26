@@ -1,0 +1,7 @@
+DOMAIN = "arlo_local"
+VERSION = "0.5.0b1"
+SERVICE_TYPE = "_arlo-video._tcp.local."
+PORT = 554
+INVENTORY_INTERVAL = 15 * 60
+RENEW_DAYS = 60
+PYARLO_VERSION = "0.8.0.27"

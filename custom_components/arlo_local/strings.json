@@ -1,0 +1,74 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Arlo Local owner authentication",
+        "description": "Use the Arlo account that owns the SmartHub. IMAP supports unattended email MFA; push requires approval in the Arlo app. Manual email or SMS MFA requires entering a one-time code. The existing Aarlo account is not changed.",
+        "data": {
+          "host": "SmartHub IP address",
+          "hostname": "SmartHub mDNS hostname",
+          "hub_id": "SmartHub device ID",
+          "username": "Arlo owner email",
+          "password": "Arlo owner password",
+          "mfa": "MFA method",
+          "imap_host": "IMAP server",
+          "imap_username": "IMAP username",
+          "imap_password": "IMAP app-specific password"
+        }
+      },
+      "mfa": {
+        "title": "Enter Arlo verification code",
+        "description": "Enter the six-digit code sent by Arlo. The code is not saved.",
+        "data": {"code": "Verification code"}
+      },
+      "reauth": {
+        "title": "Reauthenticate Arlo Local",
+        "description": "Update the owner account or MFA settings. Existing valid local credentials are retained."
+      }
+    },
+    "progress": {
+      "authenticate": "Authenticating and verifying SmartHub certificates. Approve the Arlo push if requested."
+    },
+    "error": {
+      "invalid_auth": "Owner authentication or MFA failed.",
+      "invalid_mfa": "Enter a valid six-digit verification code.",
+      "invalid_config": "Enter the required hub and authentication settings.",
+      "cannot_connect": "Could not validate the local SmartHub connection.",
+      "inventory_unavailable": "Unable to verify the owner and SmartHub inventory.",
+      "issuance_unresolved": "A prior certificate issuance is unresolved. Existing credentials were retained; no new request was sent."
+    },
+    "abort": {
+      "already_configured": "This SmartHub is already configured.",
+      "already_in_progress": "A setup flow for this SmartHub is in progress.",
+      "invalid_discovery": "The discovered service is not a supported SmartHub.",
+      "reauth_successful": "Owner authentication updated.",
+      "reconfigure_successful": "Arlo Local configuration updated.",
+      "unique_id_mismatch": "The selected SmartHub does not match the configured device."
+    }
+  },
+  "services": {
+    "prewarm": {
+      "name": "Prewarm camera",
+      "description": "Request a bounded local video-only warm lease for a camera. This does not guarantee that video is ready.",
+      "fields": {"duration": {"name": "Duration", "description": "Lease lifetime in seconds. Renew explicitly if needed."}}
+    },
+    "release_prewarm": {
+      "name": "Release camera prewarm",
+      "description": "Release the integration-owned warm lease without stopping independent viewers."
+    }
+  },
+  "issues": {
+    "local_connection": {
+      "title": "Arlo Local connection unavailable",
+      "description": "The local connection could not be verified. Cached inventory is retained; the integration will retry."
+    },
+    "inventory": {
+      "title": "Arlo Local inventory refresh failed",
+      "description": "The last successful inventory is retained. Cameras are not removed because of an unsuccessful refresh."
+    },
+    "certificate": {
+      "title": "Arlo Local certificate requires attention",
+      "description": "A renewal could not be verified. Existing certificate material is retained. Check owner authentication and the issuance state before another request."
+    }
+  }
+}

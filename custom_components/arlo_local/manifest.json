@@ -1,0 +1,23 @@
+{
+  "domain": "arlo_local",
+  "name": "Arlo Local",
+  "categories": ["security_safety.cameras"],
+  "codeowners": ["@ehendrix23"],
+  "config_flow": true,
+  "connectivity": ["network"],
+  "dependencies": [
+    "zeroconf",
+    "stream"
+  ],
+  "documentation": "https://github.com/ehendrix23/hass-aarlo-local#readme",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/ehendrix23/hass-aarlo-local/issues",
+  "requirements": [
+    "pyaarlo==0.8.0.27"
+  ],
+  "version": "0.5.0b1",
+  "zeroconf": [
+    "_arlo-video._tcp.local."
+  ]
+}

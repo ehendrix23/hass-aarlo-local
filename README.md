@@ -1,0 +1,41 @@
+# Arlo Local for Home Assistant
+
+**Development preview (0.5.0b1). No stable release yet.** This integration is intended for controlled testing. Do not use it as the sole source of evidence for safety-critical automation, including garage-door actuation.
+
+Arlo Local discovers cameras through a compatible Arlo SmartHub and provides Home Assistant camera entities backed by authenticated local video and snapshots. It runs its own isolated go2rtc distributor and does not manage Home Assistant's existing go2rtc instance or replace Aarlo.
+
+## Requirements and scope
+
+- Home Assistant 2026.11.3 or later (the minimum tested Core version is 2026.11.3).
+- A compatible Arlo SmartHub reachable on the same local network. VMB5000 is the physical test platform; compatibility with every camera model is not established.
+- The Arlo owner account and MFA for inventory and certificate provisioning. The cloud is still needed for these operations and certificate renewal; the video transport itself is local. Continuous WAN-independent operation has not been accepted.
+- `go2rtc` and `ffmpeg` available to the Home Assistant Core process on PATH, with FFmpeg H.264/libx264 support. go2rtc 1.9.13 is the tested version. Marketplace installs the Python integration, not these executables. The production HAOS runtime prerequisites and load still need verification.
+
+## Install a preview
+
+1. In Home Assistant, open **Settings > Marketplace**, open its menu, and add the custom repository `https://github.com/ehendrix23/hass-aarlo-local` as an integration (where a category is requested).
+2. Select Arlo Local and explicitly select the development preview when offered. Do not install an unreviewed default branch or treat this preview as a stable release.
+3. After download, restart Home Assistant when requested. Under **Settings > Devices & services**, add Arlo Local or use the discovered SmartHub.
+4. Enter the SmartHub connection details if discovery does not supply them, then authenticate with its owner account. Supported MFA choices are push, IMAP, manual email and manual SMS.
+
+For HACS installations, add the same URL as a custom repository with category **Integration** and enable pre-release versions. Keep the installed directory and integration domain `custom_components/arlo_local` unchanged. Do not configure a second entry for the same hub when updating.
+
+Never post account credentials, certificates, keys, tokens or unredacted Home Assistant logs in issues. Back up the existing Home Assistant configuration before installing or upgrading. The integration stores credential material separately from its source directory; do not delete that storage to force another certificate issuance.
+
+## Video behavior
+
+Each active camera has one upstream authenticated RTSP session; local consumers share its distributed video. The current policy permits up to three active upstreams and up to two warm-only camera leases. Audio, recording management, motion and sound sensors are outside this release. Some camera models, including VMC3060B, have unresolved compatibility issues.
+
+The optional `arlo_local.prewarm` action requests a bounded warm lease on a camera entity. `duration` is 5–120 seconds (default 90). This does not assert that video is ready. `arlo_local.release_prewarm` releases the warm lease without stopping independent viewers. No automatic warming is enabled by default.
+
+The distributor staggers planned warm-only renewal; real viewers are not proactively interrupted for that renewal. Unexpected stream loss or a detected timeline discontinuity closes affected consumers so they can reopen and recover. A normalized RTP timeline check allows legitimate 32-bit wrap and detects backward timestamps/source changes. It is not proof of the optical age of a frame, and a consuming application must independently enforce freshness and fail closed.
+
+## Development and verification
+
+The isolated synthetic test suite requires Python 3.14.2, the locked `ha-test` environment, FFmpeg and go2rtc. It uses temporary synthetic certificates and simulated camera endpoints; no live camera credentials are required. See the CI workflow for the reproducible commands. The quality gate requires at least 95% branch coverage in every integration module with branches and complete config-flow coverage.
+
+Physical-camera short recovery tests have passed, including independent and simultaneous stream failures. Long-duration natural rollover, production HA resource load, model compatibility and garage shadow-mode validation remain acceptance gates. See [release notes](CHANGELOG.md).
+
+## Attribution and licensing
+
+Arlo Local uses [pyaarlo](https://github.com/twrecked/pyaarlo), [go2rtc](https://github.com/AlexxIT/go2rtc), [FFmpeg](https://ffmpeg.org/), [PyAV](https://github.com/PyAV-Org/PyAV) and [Home Assistant](https://github.com/home-assistant/core). Those separately installed projects retain their own licenses. No executable binaries or dependency source distributions are bundled. This is an independent project, not an official Arlo product or an Aarlo replacement. The repository owner's choice of license for the original integration code is pending; no additional open-source license is implied by publishing this preview.

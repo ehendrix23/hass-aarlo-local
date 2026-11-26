@@ -1,0 +1,47 @@
+name: Validate integration
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: '0.13.8'
+          enable-cache: false
+      - name: Install locked test environment
+        run: uv sync --project ha-test --locked --python 3.14.2
+      - name: Install test executables
+        run: |
+          mkdir -p ha-test/bin
+          curl --fail --location --retry 3 --output ha-test/bin/go2rtc https://github.com/AlexxIT/go2rtc/releases/download/v1.9.13/go2rtc_linux_amd64
+          echo 'dce491325c28890ad0b85e83090753dc111b903ef83f43b834798f9114520dba  ha-test/bin/go2rtc' | sha256sum --check
+          chmod +x ha-test/bin/go2rtc
+          ln -s "$(ha-test/.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" ha-test/bin/ffmpeg
+      - name: Validate package and run quality gates
+        run: |
+          uv run --project ha-test --no-sync --with coverage==7.17.5 --with mypy==2.4.1 --with types-psutil==7.2.2.20261122 --with ruff==0.14.10 sh -ec '
+            python scripts/validate_package.py
+            python ha-test/regression.py
+            python -m mypy --config-file mypy.ini
+            ruff check custom_components/arlo_local scripts
+            ruff format --check custom_components/arlo_local scripts
+          '
+  hassfest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: home-assistant/actions/hassfest@9e9565e68f5a70d874202871f4c4064d23814235

@@ -1,0 +1,18 @@
+prewarm:
+  target:
+    entity:
+      domain: camera
+      integration: arlo_local
+  fields:
+    duration:
+      default: 90
+      selector:
+        number:
+          min: 5
+          max: 120
+          unit_of_measurement: s
+release_prewarm:
+  target:
+    entity:
+      domain: camera
+      integration: arlo_local
