@@ -16,8 +16,10 @@ TESTS=[
     "test_arlo_local_distribution.SharedStreamTests.test_two_consumers_one_hub_connection",
     "test_arlo_local_distribution.SharedStreamTests.test_repeated_upstream_loss_fences_actual_decoder",
     "test_arlo_local_distribution.SharedStreamTests.test_warm_lease_rollover_and_release",
+    "test_arlo_local_distribution.SharedStreamTests.test_real_demand_reclaims_only_warm_only_capacity",
     "test_arlo_local_stream_fence",
     "test_arlo_local_process_owner",
+    "test_arlo_local_retry",
     "test_arlo_local_video_timeline",
     "test_arlo_local_native.NativeRuntimeTests.test_native_entities_shared_snapshot_stream_and_inventory",
     "test_arlo_local_config_flow",
@@ -36,6 +38,7 @@ TESTS=[
     "test_arlo_local_protocol_faults.ProtocolFaultTests",
     "test_arlo_local_protocol_faults.BootstrapFaultTests.test_bootstrap_success_cseq_mapping_and_feedback",
     "test_arlo_local_protocol_faults.BootstrapFaultTests.test_bootstrap_failure_closes_connection",
+    "test_arlo_local_protocol_faults.BootstrapFaultTests.test_refused_startup_has_bounded_retry_cooldown",
     "test_arlo_local_protocol_faults.BootstrapFaultTests.test_invalid_initial_or_subsequent_cseq",
     "test_arlo_local_protocol_faults.BootstrapFaultTests.test_invalid_first_packet_does_not_connect_and_cancel_releases",
 ]

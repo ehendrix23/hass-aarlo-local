@@ -1,6 +1,6 @@
 # Arlo Local for Home Assistant
 
-**Development preview (0.5.0b1). No stable release yet.** This integration is intended for controlled testing. Do not use it as the sole source of evidence for safety-critical automation, including garage-door actuation.
+**Development preview (0.5.0b2). No stable release yet.** This integration is intended for controlled testing. Do not use it as the sole source of evidence for safety-critical automation, including garage-door actuation.
 
 Arlo Local discovers cameras through a compatible Arlo SmartHub and provides Home Assistant camera entities backed by authenticated local video and snapshots. It runs its own isolated go2rtc distributor and does not manage Home Assistant's existing go2rtc instance or replace Aarlo.
 
@@ -9,7 +9,7 @@ Arlo Local discovers cameras through a compatible Arlo SmartHub and provides Hom
 - Home Assistant 2026.11.3 or later (the minimum tested Core version is 2026.11.3).
 - A compatible Arlo SmartHub reachable on the same local network. VMB5000 is the physical test platform; compatibility with every camera model is not established.
 - The Arlo owner account and MFA for inventory and certificate provisioning. The cloud is still needed for these operations and certificate renewal; the video transport itself is local. Continuous WAN-independent operation has not been accepted.
-- `go2rtc` and `ffmpeg` available to the Home Assistant Core process on PATH, with FFmpeg H.264/libx264 support. go2rtc 1.9.13 is the tested version. Marketplace installs the Python integration, not these executables. The production HAOS runtime prerequisites and load still need verification.
+- `go2rtc` and `ffmpeg` available to the Home Assistant Core process on PATH, with FFmpeg H.264/libx264 support. The released Home Assistant Core 2026.11.3 AMD64 image includes go2rtc 1.9.15 and FFmpeg 8.1.3 with libx264; the image is tested in CI. Marketplace installs the Python integration, not these executables. Actual production HAOS resource load still needs verification.
 
 ## Install a preview
 
@@ -25,6 +25,8 @@ Never post account credentials, certificates, keys, tokens or unredacted Home As
 ## Video behavior
 
 Each active camera has one upstream authenticated RTSP session; local consumers share its distributed video. The current policy permits up to three active upstreams and up to two warm-only camera leases. Audio, recording management, motion and sound sensors are outside this release. Some camera models, including VMC3060B, have unresolved compatibility issues.
+
+Real video demand may reclaim a slot from an optional warm-only camera, but will not disconnect an established real viewer. If all slots are occupied by actual viewers, additional demand fails rather than exceeding the local limit. Failed upstream startup attempts and repeated warm-worker exits use bounded exponential backoff of 1–15 seconds. This local limit does not account for independent Arlo app, cloud or recording activity; coexistence at the hub's full capacity is not established.
 
 The optional `arlo_local.prewarm` action requests a bounded warm lease on a camera entity. `duration` is 5–120 seconds (default 90). This does not assert that video is ready. `arlo_local.release_prewarm` releases the warm lease without stopping independent viewers. No automatic warming is enabled by default.
 

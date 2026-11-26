@@ -4,7 +4,10 @@ import asyncio
 from collections.abc import Callable
 from contextlib import suppress
 
+from .retry import RetryBackoff
 from .stream_fence import StreamFence
+
+BACKOFF_RESET_SECONDS = 10
 
 
 class WarmLease:
@@ -32,8 +35,10 @@ class WarmLease:
 
     async def _run(self) -> None:
         clock = asyncio.get_running_loop().time
+        retry = RetryBackoff()
         try:
             while clock() < self.deadline:
+                started = clock()
                 proc: asyncio.subprocess.Process | None = None
                 try:
                     spawn = asyncio.create_task(
@@ -92,7 +97,10 @@ class WarmLease:
                                 proc.kill()
                             await proc.wait()
                 if clock() < self.deadline:
-                    await asyncio.sleep(min(1.0, max(0.0, self.deadline - clock())))
+                    if clock() - started >= BACKOFF_RESET_SECONDS:
+                        retry.reset()
+                    delay = retry.failed(clock())
+                    await asyncio.sleep(min(delay, max(0.0, self.deadline - clock())))
         finally:
             await self.fence.close()
 

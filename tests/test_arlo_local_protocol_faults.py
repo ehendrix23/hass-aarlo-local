@@ -61,6 +61,34 @@ class ProtocolFaultTests(IsolatedAsyncioTestCase):
 
 
 class BootstrapFaultTests(PackagedTLSTests):
+    async def test_refused_startup_has_bounded_retry_cooldown(self):
+        self.mode="reject"
+        relay=self.relay(playback_authorized=True)
+        url=await relay.start()
+        async def attempt():
+            rd,wr=await asyncio.open_connection("127.0.0.1",relay.local_port)
+            wr.write(r.Message("DESCRIBE "+url+" RTSP/1.0",[("CSeq","1")]).encode())
+            await wr.drain()
+            try:
+                return await asyncio.wait_for(rd.read(1),3)
+            finally:
+                await r.close_writer(wr)
+                async with asyncio.timeout(3):
+                    while relay.active:await asyncio.sleep(.01)
+        self.assertEqual(await attempt(),b"")
+        self.assertEqual(self.connections,1)
+        self.assertEqual(await attempt(),b"")
+        self.assertEqual(self.connections,1)
+        self.assertEqual(relay.retry.failures,1)
+        relay.retry.not_before=0
+        self.assertEqual(await attempt(),b"")
+        self.assertEqual(self.connections,2)
+        self.assertEqual(relay.retry.failures,2)
+        relay.retry.not_before=0
+        self.mode="ok"
+        self.assertEqual(await attempt(),b"R")
+        self.assertEqual(self.connections,3)
+
     async def mock_hub(self,reader,writer):
         self.connections+=1
         self.finished.clear()

@@ -58,7 +58,7 @@ class DecoderTest(TLSTests):
                     reply.set("Nonce","100")
                 elif method == "DESCRIBE":
                     reply.set("Content-Type","application/sdp")
-                    reply.set("Content-Base","rtsp://hub.local/cam/tcp/avc/")
+                    reply.set("Content-Base",m.start.split()[1].rstrip("/")+"/")
                     reply.body = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=POC\r\n"
                                   "c=IN IP4 127.0.0.1\r\nt=0 0\r\na=control:*\r\n"
                                   "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
@@ -69,7 +69,7 @@ class DecoderTest(TLSTests):
                     reply.set("Transport","RTP/AVP/TCP;unicast;interleaved=0-1;ssrc=12345678")
                 elif method == "PLAY":
                     reply.set("Session",session)
-                    reply.set("RTP-Info","url=rtsp://hub.local/cam/tcp/avc/trackID=0;seq=1000;rtptime=0")
+                    reply.set("RTP-Info","url="+m.start.split()[1].rstrip("/")+"/trackID=0;seq=1000;rtptime=0")
                 elif method == "TEARDOWN":
                     reply.set("Session",session)
                 writer.write(reply.encode())

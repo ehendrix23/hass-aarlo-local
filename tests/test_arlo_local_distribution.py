@@ -113,7 +113,7 @@ class SharedStreamTests(DecoderTest):
                 while not check():
                     await asyncio.sleep(.05)
         # Accelerate the same idle-only rollover path used at 20–22.5 min.
-        with patch("custom_components.arlo_local.distribution.ROLLOVER_BASE_SECONDS", 2), patch("custom_components.arlo_local.distribution.ROLLOVER_STAGGER_SECONDS", 1):
+        with patch("custom_components.arlo_local.distribution.ROLLOVER_BASE_SECONDS", 2), patch("custom_components.arlo_local.distribution.ROLLOVER_STAGGER_SECONDS", 1), patch("custom_components.arlo_local.warm.BACKOFF_RESET_SECONDS", 1):
             self.assertTrue(await broker.prewarm("cam", 15))
             lease = broker.warm_leases["cam"]
             await wait_for(lambda: relay.upstream_sessions >= 2)
@@ -148,3 +148,49 @@ class SharedStreamTests(DecoderTest):
         self.assertIsNone(expiring.fence.server)
         await wait_for(lambda: not relay.active)
         self.assertEqual(broker.output_url("cam"), url)
+
+    async def test_real_demand_reclaims_only_warm_only_capacity(self):
+        self.frame_count = 400
+        ffmpeg = await self._video_fixture()
+        broker = Distributor(os.environ["ARLO_POC_GO2RTC"], "127.0.0.1", "hub.local",
+                             self.context, self.pin, port=self.port, ffmpeg_binary=ffmpeg)
+        self.addAsyncCleanup(broker.close)
+        urls = {k: await broker.add(k) for k in ("warm", "view1", "view2", "view3")}
+        processes = []
+        async def start_view(k):
+            p = await asyncio.create_subprocess_exec(ffmpeg, "-nostdin", "-v", "error", "-rtsp_transport", "tcp", "-timeout", "5000000",
+                "-analyzeduration", "100000", "-probesize", "32768", "-i", urls[k], "-an", "-pix_fmt", "rgb24", "-fps_mode", "passthrough", "-f", "rawvideo", "pipe:1",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            processes.append(p)
+            await asyncio.wait_for(p.stdout.readexactly(160*120*3), 12)
+            return p
+        try:
+            self.assertTrue(await broker.prewarm("warm", 60))
+            async with asyncio.timeout(8):
+                while not broker.relays["warm"].connected_since:
+                    await asyncio.sleep(.05)
+            p1, p2 = await asyncio.gather(start_view("view1"), start_view("view2"))
+            self.assertEqual(sum(r.active for r in broker.relays.values()), 3)
+            p3 = await start_view("view3")
+            self.assertNotIn("warm", broker.warm_leases)
+            self.assertFalse(broker.relays["warm"].active)
+            for k,p in (("view1",p1),("view2",p2),("view3",p3)):
+                await asyncio.wait_for(p.stdout.readexactly(160*120*3*2), 5)
+                self.assertEqual(broker.relays[k].upstream_sessions, 1)
+            self.assertEqual(self.connections,4)
+            self.assertFalse(await broker.prewarm("warm", 60))
+            self.assertTrue(await broker.prewarm("view1", 60))
+            protected = broker.warm_leases["view1"]
+            # A warm lease attached to a real viewer is not reclaimable.
+            # The fourth viewer must fail closed rather than displace it.
+            with self.assertRaises(asyncio.IncompleteReadError):
+                await start_view("warm")
+            self.assertIs(broker.warm_leases["view1"], protected)
+            self.assertEqual(self.connections,4)
+            for k,p in (("view1",p1),("view2",p2),("view3",p3)):
+                await asyncio.wait_for(p.stdout.readexactly(160*120*3*2), 5)
+                self.assertEqual(broker.relays[k].upstream_sessions, 1)
+        finally:
+            for p in processes:
+                if p.returncode is None: p.kill()
+                await p.communicate()

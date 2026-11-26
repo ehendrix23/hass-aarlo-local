@@ -263,6 +263,7 @@ class Distributor:
                 admission=self._admission,
                 on_ending=lambda: self._invalidate_generation(camera_id, fence),
                 on_ended=lambda: self._resume_generation(camera_id, fence),
+                on_capacity=lambda: self._reclaim_warm_capacity(camera_id),
             )
             try:
                 source = await relay.start()
@@ -347,6 +348,34 @@ class Distributor:
             for task in tuple(relay.tasks):
                 task.cancel()
 
+    async def _reclaim_warm_capacity(self, camera_id: str) -> None:
+        """A validated real viewer may reclaim one idle warm lease, never a viewer."""
+        async with self._lock:
+            demand = self.fences.get(camera_id)
+            if demand is None or not demand.clients or not self._admission.locked():
+                return
+            for key, lease in tuple(self.warm_leases.items()):
+                if key == camera_id:
+                    continue
+                relay = self.relays.get(key)
+                fence = self.fences.get(key)
+                if relay is None or fence is None or fence.clients or not relay.active:
+                    continue
+                # Fence before yielding. The warm worker cannot reopen the
+                # retired generation, and no real viewer is connected to it.
+                self.warm_leases.pop(key)
+                lease.fence.invalidate()
+                fence.invalidate()
+                tasks = tuple(relay.tasks)
+                for task in tasks:
+                    task.cancel()
+                try:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                finally:
+                    await lease.close()
+                    fence.resume()
+                return
+
     async def prewarm(self, camera_id: str, duration: float = 90) -> bool:
         """Request a finite, renewable warm lease, never a permanent stream."""
         if not 5 <= duration <= MAX_WARM_SECONDS:
@@ -368,6 +397,8 @@ class Distributor:
                 lease.extend(duration)
                 return True
             if len(self.warm_leases) >= MAX_WARM_CAMERAS:
+                return False
+            if self._admission.locked() and not self.relays[camera_id].active:
                 return False
             assert self.rtsp_port is not None
             assert self.ffmpeg_binary is not None

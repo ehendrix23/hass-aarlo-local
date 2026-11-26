@@ -9,10 +9,12 @@ import asyncio
 import hashlib
 import re
 import ssl
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+
+from .retry import RetryBackoff
 
 HEADER_LIMIT = 65536
 BODY_LIMIT = 4 * 1024 * 1024
@@ -213,6 +215,7 @@ class Relay:
         admission: asyncio.BoundedSemaphore | None = None,
         on_ending: Callable[[], None] | None = None,
         on_ended: Callable[[], None] | None = None,
+        on_capacity: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         if not playback_authorized:
             raise PermissionError("Playback safety gate is closed")
@@ -230,6 +233,8 @@ class Relay:
         self.admission = admission
         self.on_ending = on_ending
         self.on_ended = on_ended
+        self.on_capacity = on_capacity
+        self.retry = RetryBackoff()
         self.upstream_sessions = 0
         self.connected_since: float | None = None
         self.tasks: set[asyncio.Task[None]] = set()
@@ -303,21 +308,30 @@ class Relay:
         pumps: list[asyncio.Task[None]] = []
         nonce = Nonce()
         admitted = False
+        starting = failed = media_seen = False
+        clock = asyncio.get_running_loop().time
         try:
             # Do not contact the hub until a validated RTSP request arrives.
             first = await asyncio.wait_for(read_unit(local_reader), TIMEOUT)
             if not isinstance(first, Message):
                 raise TypeError("Expected RTSP request")
             self._check_request(first)
+            if not self.retry.ready(clock()):
+                self._trace({"admission": "retry_cooldown"})
+                return
             if self.admission is not None:
-                # No waiting queue: a full hub must not start another upstream
-                # session or disturb an existing producer. On this event loop,
-                # an unlocked semaphore's acquire completes without yielding.
+                # A demand request may reclaim a warm-only slot. The admission
+                # semaphore is still authoritative after the awaited callback.
+                if self.admission.locked() and self.on_capacity is not None:
+                    await self.on_capacity()
+                if not self.accepting:
+                    return
                 if self.admission.locked():
                     self._trace({"admission": "capacity"})
                     return
                 await self.admission.acquire()
                 admitted = True
+            starting = True
             upstream_reader, upstream_writer = await connect_hub(
                 host, port, hostname, context, expected_pin
             )
@@ -381,6 +395,7 @@ class Relay:
                 await asyncio.wait_for(upstream_writer.drain(), TIMEOUT)
 
             await send_request(first)
+            starting = False
 
             async def up() -> None:
                 assert upstream_writer is not None
@@ -393,10 +408,22 @@ class Relay:
                         await asyncio.wait_for(upstream_writer.drain(), TIMEOUT)
 
             async def down() -> None:
+                nonlocal failed, media_seen
                 while True:
-                    msg = await read_unit(upstream_reader)
+                    try:
+                        msg = await read_unit(upstream_reader)
+                    except (
+                        OSError,
+                        ValueError,
+                        asyncio.IncompleteReadError,
+                        asyncio.LimitOverrunError,
+                    ):
+                        failed = not media_seen
+                        raise
                     if isinstance(msg, Message):
                         status = response_status(msg)
+                        if not media_seen and int(status) >= 400:
+                            failed = True
                         nonce.receive(msg)
                         self._trace(
                             {
@@ -444,6 +471,10 @@ class Relay:
                         rewrite_message(msg, hub_authorities, self.local_authorities[0])
                         payload = msg.encode()
                     else:
+                        if not media_seen:
+                            media_seen = True
+                            failed = False
+                            self.retry.reset()
                         payload = msg
                     local_writer.write(payload)
                     await asyncio.wait_for(local_writer.drain(), TIMEOUT)
@@ -453,8 +484,9 @@ class Relay:
             for item in done:
                 item.result()
         except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
-            pass
+            failed = failed or starting
         except asyncio.CancelledError:
+            starting = False
             raise
         except (
             OSError,
@@ -463,9 +495,13 @@ class Relay:
             RuntimeError,
             asyncio.LimitOverrunError,
         ) as exc:
+            failed = failed or starting
             self.errors.append(type(exc).__name__)
             del self.errors[:-20]
         finally:
+            if failed:
+                delay = self.retry.failed(clock())
+                self._trace({"retry_delay_s": int(delay)})
             connected = upstream_writer is not None
             try:
                 if connected and self.on_ending is not None:
