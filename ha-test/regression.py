@@ -27,6 +27,7 @@ TESTS=[
     "test_arlo_local_mfa",
     "test_arlo_local_lifecycle.LifecycleTests.test_native_entry_registry_snapshot_reload_and_unload",
     "test_arlo_local_storage",
+    "test_arlo_local_warm_retry",
     "test_arlo_local_runtime_faults",
     "test_arlo_local_distribution_faults.DistributorFaultTests",
     "test_arlo_local_distribution_faults.DistributionAdmissionTests.test_hub_limit_releases_capacity_without_disrupting_active_relays",
