@@ -1,6 +1,7 @@
 """Distributor process, cancellation and per-camera failure tests."""
 import asyncio
 import os
+import shutil
 import ssl
 import threading
 import unittest
@@ -194,7 +195,9 @@ class DistributorFaultTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("third",b.warm_leases)
 
     async def test_failed_process_start_and_untrusted_api_endpoint(self):
-        b=self.distributor("/usr/bin/false")
+        failing_binary=shutil.which("false")
+        self.assertIsNotNone(failing_binary)
+        b=self.distributor(failing_binary)
         with self.assertRaisesRegex(RuntimeError,"exited"):
             await b.start()
         self.assertIsNone(b.process)
