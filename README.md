@@ -1,6 +1,6 @@
 # Arlo Local for Home Assistant
 
-**Development preview (0.5.0b5). No stable release yet.** This integration is intended for controlled observation-only testing. Do not use it for safety-critical automation, including garage-door actuation, before independent validation. The two-camera 31-minute active-stream endurance gate has not passed.
+**Development preview (0.5.0b6). No stable release yet.** This integration is intended for controlled observation-only testing. Do not use it for safety-critical automation, including garage-door actuation, before independent validation. The two-camera 31-minute active-stream endurance gate has not passed.
 
 Arlo Local discovers cameras through a compatible Arlo SmartHub and provides Home Assistant camera entities backed by authenticated local video and snapshots. It runs its own isolated go2rtc distributor and does not manage Home Assistant's existing go2rtc instance or replace Aarlo.
 

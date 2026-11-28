@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.5.0b6 — SmartHub discovery development preview
 
 - Discover SmartHubs when Arlo Local is added manually, using Home Assistant's shared Zeroconf service browser. Prepopulate a single unconfigured hub's private IPv4 address, hostname and device ID; provide a selection for multiple hubs and retain editable manual entry if discovery is unavailable.
 - Retain the discovered service name when submitted connection details match the advertisement. Reject malformed or conflicting advertisements and retain duplicate-entry, owner-inventory, MFA and certificate checks. Manual setup can supersede a passive discovery notification without interrupting an authentication flow already in progress.
