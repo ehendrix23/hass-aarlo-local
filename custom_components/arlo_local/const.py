@@ -1,5 +1,5 @@
 DOMAIN = "arlo_local"
-VERSION = "0.5.0b4"
+VERSION = "0.5.0b5"
 COLD_START_TIMEOUT_US = 10_000_000
 ESTABLISHED_VIDEO_TIMEOUT = 3.0
 SERVICE_TYPE = "_arlo-video._tcp.local."

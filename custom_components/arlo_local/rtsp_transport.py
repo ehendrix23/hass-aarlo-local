@@ -10,6 +10,7 @@ import hashlib
 import re
 import ssl
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -172,13 +173,49 @@ async def connect_hub(
     return reader, writer
 
 
-async def close_writer(writer: asyncio.StreamWriter | None) -> None:
-    if writer is not None:
-        writer.close()
+async def _settle_close[T](future: asyncio.Future[T]) -> T:
+    """Wait for owned cleanup even if the caller is cancelled again."""
+    cancelled = False
+    while not future.done():
         try:
-            await asyncio.wait_for(writer.wait_closed(), 1)
-        except (TimeoutError, OSError):
-            pass
+            await asyncio.shield(future)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = future.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
+async def close_writer(writer: asyncio.StreamWriter | None) -> None:
+    if writer is None:
+        return
+    # Relay/fence teardown may already have initiated close. In CPython
+    # a second TLS transport.close() can detach the SSL protocol before
+    # the underlying TCP connection has closed, defeating abort().
+    if not writer.is_closing():
+        writer.close()
+
+    # TLS close() only initiates the close-notify exchange. Cancelling the
+    # StreamWriter's close waiter would discard the actual connection-lost
+    # acknowledgement while leaving its TCP socket established. Preserve the
+    # waiter, abort an unresponsive transport, and settle it before returning.
+    async def wait_closed() -> None:
+        # A connection-lost error is still a closure acknowledgement.
+        with suppress(OSError):
+            await writer.wait_closed()
+
+    closed = asyncio.create_task(wait_closed())
+    try:
+        done, _ = await asyncio.wait({closed}, timeout=1)
+        if not done:
+            writer.transport.abort()
+        await _settle_close(closed)
+    except asyncio.CancelledError:
+        if not closed.done():
+            writer.transport.abort()
+            await _settle_close(closed)
+        raise
 
 
 async def probe_tls(
@@ -507,10 +544,11 @@ class Relay:
             try:
                 if connected and self.on_ending is not None:
                     self.on_ending()
-                # Fence both transports before an await in cleanup. A second
-                # cancellation cannot leave the other socket open.
-                local_writer.close()
-                if upstream_writer is not None:
+                # Start closing both transports before awaiting cleanup.
+                # TLS shutdown is not itself proof of socket release.
+                if not local_writer.is_closing():
+                    local_writer.close()
+                if upstream_writer is not None and not upstream_writer.is_closing():
                     upstream_writer.close()
                 for pump in pumps:
                     pump.cancel()
@@ -518,6 +556,26 @@ class Relay:
                     await asyncio.gather(*pumps, return_exceptions=True)
                 await close_writer(upstream_writer)
                 await close_writer(local_writer)
+            except BaseException:
+                # Cancellation can also interrupt the pump join, a fence
+                # callback, or the local close. Retain the admission until
+                # both actual transports and the pumps have settled, rather
+                # than relying on is_closing() or on logical relay counters.
+                writers = [local_writer]
+                if upstream_writer is not None:
+                    writers.append(upstream_writer)
+                for writer in writers:
+                    writer.transport.abort()
+                for pump in pumps:
+                    pump.cancel()
+                await _settle_close(
+                    asyncio.gather(
+                        *pumps,
+                        *(writer.wait_closed() for writer in writers),
+                        return_exceptions=True,
+                    )
+                )
+                raise
             finally:
                 if admitted and self.admission is not None:
                     self.admission.release()

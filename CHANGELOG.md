@@ -1,5 +1,12 @@
 # Release notes
 
+## 0.5.0b5 — observation-only development preview
+
+- Retain upstream admission ownership until TLS socket shutdown and relay pump cleanup actually complete, including repeated cancellation and an unresponsive peer. Avoid duplicate TLS close calls and abort an unresponsive close after a bounded grace period.
+- Add four real loopback mutual-TLS ownership regressions, including repeated simultaneous loss and replacement of two upstream sessions.
+- Two subsequent physical two-camera trials maintained the configured two-connection ceiling and cleaned up all owned sockets, but failed the 31-minute endurance requirement because a replacement camera stream did not deliver fresh upstream video. Recording-related interruption and sustained multi-camera availability are not accepted.
+- For initial Home Assistant evaluation, use one on-demand local stream, no prewarming, and leave existing camera and physical-control integrations unchanged. This preview is not a stable release or authorization to use local video for garage actuation. Production host resource consumption, recording integrity and shadow-mode acceptance remain outstanding.
+
 ## 0.5.0b4 — development preview
 
 - Add persistent per-hub admission options (1–5, default 3), non-preemptive limit changes and budget-aware warm-only leases.

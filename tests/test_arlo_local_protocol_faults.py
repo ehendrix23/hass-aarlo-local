@@ -47,6 +47,7 @@ class ProtocolFaultTests(IsolatedAsyncioTestCase):
 
     async def test_unverified_transport_is_closed(self):
         writer=Mock()
+        writer.is_closing.return_value=False
         writer.get_extra_info.return_value=None
         writer.wait_closed=AsyncMock()
         with patch.object(asyncio,"open_connection",new_callable=AsyncMock,return_value=(asyncio.StreamReader(),writer)):

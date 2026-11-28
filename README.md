@@ -1,6 +1,6 @@
 # Arlo Local for Home Assistant
 
-**Development preview (0.5.0b4). No stable release yet.** This integration is intended for controlled testing. Do not use it as the sole source of evidence for safety-critical automation, including garage-door actuation.
+**Development preview (0.5.0b5). No stable release yet.** This integration is intended for controlled observation-only testing. Do not use it for safety-critical automation, including garage-door actuation, before independent validation. The two-camera 31-minute active-stream endurance gate has not passed.
 
 Arlo Local discovers cameras through a compatible Arlo SmartHub and provides Home Assistant camera entities backed by authenticated local video and snapshots. It runs its own isolated go2rtc distributor and does not manage Home Assistant's existing go2rtc instance or replace Aarlo.
 
@@ -17,6 +17,7 @@ Arlo Local discovers cameras through a compatible Arlo SmartHub and provides Hom
 2. Select Arlo Local and explicitly select the development preview when offered. Do not install an unreviewed default branch or treat this preview as a stable release.
 3. After download, restart Home Assistant when requested. Under **Settings > Devices & services**, add Arlo Local or use the discovered SmartHub.
 4. Enter the SmartHub connection details if discovery does not supply them, then authenticate with its owner account. Supported MFA choices are push, IMAP, manual email and manual SMS.
+5. Before opening any local camera stream, configure the integration's maximum active streams to **1**. Use on-demand acquisition only and leave prewarm disabled. Keep Aarlo and existing physical-control paths unchanged while comparing results.
 
 For HACS installations, add the same URL as a custom repository with category **Integration** and enable pre-release versions. Keep the installed directory and integration domain `custom_components/arlo_local` unchanged. Do not configure a second entry for the same hub when updating.
 
