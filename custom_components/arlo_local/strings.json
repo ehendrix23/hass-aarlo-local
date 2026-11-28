@@ -1,9 +1,14 @@
 {
   "config": {
     "step": {
+      "select_hub": {
+        "title": "Select an Arlo SmartHub",
+        "description": "Select a discovered SmartHub to populate its local connection details, or enter the details manually.",
+        "data": {"hub": "SmartHub"}
+      },
       "user": {
         "title": "Arlo Local owner authentication",
-        "description": "Use the Arlo account that owns the SmartHub. IMAP supports unattended email MFA; push requires approval in the Arlo app. Manual email or SMS MFA requires entering a one-time code. The existing Aarlo account is not changed.",
+        "description": "Discovered SmartHub connection details are filled in when available. Check the details or enter them manually, then use the Arlo account that owns the SmartHub. IMAP supports unattended email MFA; push requires approval in the Arlo app. Manual email or SMS MFA requires entering a one-time code. The existing Aarlo account is not changed.",
         "data": {
           "host": "SmartHub IP address",
           "hostname": "SmartHub mDNS hostname",

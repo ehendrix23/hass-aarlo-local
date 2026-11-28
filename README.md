@@ -16,8 +16,11 @@ Arlo Local discovers cameras through a compatible Arlo SmartHub and provides Hom
 1. In Home Assistant, open **Settings > Marketplace**, open its menu, and add the custom repository `https://github.com/ehendrix23/hass-aarlo-local` as an integration (where a category is requested).
 2. Select Arlo Local and explicitly select the development preview when offered. Do not install an unreviewed default branch or treat this preview as a stable release.
 3. After download, restart Home Assistant when requested. Under **Settings > Devices & services**, add Arlo Local or use the discovered SmartHub.
-4. Enter the SmartHub connection details if discovery does not supply them, then authenticate with its owner account. Supported MFA choices are push, IMAP, manual email and manual SMS.
+4. Adding Arlo Local manually searches the local network for SmartHubs using Home Assistant's shared mDNS discovery. A single unconfigured SmartHub pre-populates its IP address, hostname and device ID; multiple hubs are offered as a choice. If discovery is blocked, unavailable, or finds no usable unconfigured hub, enter the connection details manually. Check the details, then authenticate with its owner account. Discovery does not bypass owner-inventory or certificate verification. Supported MFA choices are push, IMAP, manual email and manual SMS.
+
 5. Before opening any local camera stream, configure the integration's maximum active streams to **1**. Use on-demand acquisition only and leave prewarm disabled. Keep Aarlo and existing physical-control paths unchanged while comparing results.
+
+When a manually added hub matches its discovered service, the integration retains that service name for its existing mDNS address-refresh behavior. No camera streams or certificate requests are started by the discovery scan.
 
 For HACS installations, add the same URL as a custom repository with category **Integration** and enable pre-release versions. Keep the installed directory and integration domain `custom_components/arlo_local` unchanged. Do not configure a second entry for the same hub when updating.
 

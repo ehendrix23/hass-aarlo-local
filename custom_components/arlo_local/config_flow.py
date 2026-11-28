@@ -6,20 +6,26 @@ import ipaddress
 import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import cast
 
 import probatio
+from homeassistant.components import zeroconf as ha_zeroconf
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
+    ConfigFlowContext,
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+from zeroconf import ServiceStateChange, Zeroconf
+from zeroconf import asyncio as zc_asyncio
 
 from .budget import CONF_MAX_STREAMS, MAX_STREAMS, stream_budget
-from .const import DOMAIN, PORT
+from .const import DOMAIN, PORT, SERVICE_TYPE
 from .inventory import safe_id
 from .manual_mfa import ManualMFA
 from .owner_session import (
@@ -35,6 +41,15 @@ from .storage import CredentialStore
 PASSWORD = selector.TextSelector(
     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
 )
+DISCOVERY_WINDOW = 2.0
+DISCOVERY_TIMEOUT_MS = 3000
+MANUAL_HUB = "manual:"
+
+
+class _ArloFlowContext(ConfigFlowContext, total=False):
+    """Transient ownership marker; never persisted as entry data."""
+
+    setup_started: bool
 
 
 def validate_endpoint(
@@ -54,6 +69,92 @@ def validate_endpoint(
     if not re.fullmatch(r"[A-Za-z0-9.-]+", hostname):
         raise ValueError("Invalid SmartHub hostname")
     return str(address), hostname, safe_id(hub_id)
+
+
+def discovered_endpoint(info: ZeroconfServiceInfo) -> dict[str, str]:
+    """Validate one mDNS advertisement without granting it authentication authority."""
+    if info.type != SERVICE_TYPE or info.port != PORT:
+        raise ValueError("Invalid SmartHub service")
+    props = {str(k).lower(): v for k, v in info.properties.items()}
+    # HA prefers the most recently updated address, which may be IPv6.
+    # The existing transport requires private IPv4; try the advertised alternatives.
+    for address in dict.fromkeys([info.host, *info.addresses]):
+        try:
+            host, hostname, hub_id = validate_endpoint(
+                address, info.hostname, props.get("deviceid")
+            )
+        except (ValueError, TypeError):
+            continue
+        return {
+            "host": host,
+            "hostname": hostname,
+            "hub_id": hub_id,
+            "service_name": info.name,
+        }
+    raise ValueError("No usable SmartHub endpoint")
+
+
+async def discover_hubs(hass: HomeAssistant) -> dict[str, dict[str, str]]:
+    """Browse only the Arlo mDNS service using HA's shared Zeroconf instance."""
+    names: set[str] = set()
+
+    def changed(
+        zeroconf: Zeroconf,
+        service_type: str,
+        name: str,
+        state_change: ServiceStateChange,
+    ) -> None:
+        if state_change is ServiceStateChange.Removed:
+            names.discard(name)
+        else:
+            names.add(name)
+
+    try:
+        async with asyncio.timeout(DISCOVERY_WINDOW + 4):
+            zc = await ha_zeroconf.async_get_async_instance(hass)
+            browser = zc_asyncio.AsyncServiceBrowser(
+                zc.zeroconf, SERVICE_TYPE, handlers=[changed]
+            )
+            try:
+                await asyncio.sleep(DISCOVERY_WINDOW)
+                services = await asyncio.gather(
+                    *(
+                        zc.async_get_service_info(
+                            SERVICE_TYPE, name, DISCOVERY_TIMEOUT_MS
+                        )
+                        for name in sorted(names)
+                    ),
+                    return_exceptions=True,
+                )
+            finally:
+                await browser.async_cancel()
+    except (OSError, RuntimeError, KeyError, HomeAssistantError):
+        # Discovery is optional. The manual form remains usable if mDNS is
+        # blocked, not initialized, or times out.
+        return {}
+
+    hubs: dict[str, dict[str, str]] = {}
+    ambiguous: set[str] = set()
+    for service in services:
+        if (
+            not isinstance(service, zc_asyncio.AsyncServiceInfo)
+            or service.name not in names
+        ):
+            continue
+        try:
+            info = ha_zeroconf.info_from_service(service)
+            if info is None:
+                continue
+            endpoint = discovered_endpoint(info)
+        except (ValueError, TypeError, AttributeError):
+            continue
+        hub_id = endpoint["hub_id"]
+        if hub_id in hubs and hubs[hub_id] != endpoint:
+            ambiguous.add(hub_id)
+        hubs[hub_id] = endpoint
+    return {
+        hub_id: endpoint for hub_id, endpoint in hubs.items() if hub_id not in ambiguous
+    }
 
 
 def credential_config(values: Mapping[str, object]) -> dict[str, str]:
@@ -88,6 +189,9 @@ class ArloLocalConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self.endpoint: dict[str, str] = {}
+        self._suggested_endpoint: dict[str, str] = {}
+        self._discovered_hubs: dict[str, dict[str, str]] = {}
+        self._discovery_attempted = False
         self._config: dict[str, str] = {}
         self._job: asyncio.Task[dict[str, str]] | None = None
         self._manual_mfa: ManualMFA | None = None
@@ -100,41 +204,62 @@ class ArloLocalConfigFlow(ConfigFlow, domain=DOMAIN):
         self, discovery_info: ZeroconfServiceInfo
     ) -> ConfigFlowResult:
         try:
-            if discovery_info.port != PORT:
-                raise ValueError
-            props = {str(k).lower(): v for k, v in discovery_info.properties.items()}
-            host, hostname, hub_id = validate_endpoint(
-                discovery_info.host, discovery_info.hostname, props.get("deviceid")
-            )
+            self.endpoint = discovered_endpoint(discovery_info)
         except (ValueError, TypeError, AttributeError):
             return self.async_abort(reason="invalid_discovery")
-        self.endpoint = {
-            "host": host,
-            "hostname": hostname,
-            "hub_id": hub_id,
-            "service_name": discovery_info.name,
-        }
-        await self.async_set_unique_id(hub_id)
+        await self.async_set_unique_id(self.endpoint["hub_id"])
         self._abort_if_unique_id_configured(
             updates=self.endpoint, reload_on_update=False
         )
-        self.context["title_placeholders"] = {"name": hostname}
+        self.context["title_placeholders"] = {"name": self.endpoint["hostname"]}
         return await self.async_step_user()
+
+    async def async_step_select_hub(
+        self, user_input: dict[str, object] | None = None
+    ) -> ConfigFlowResult:
+        """Choose a discovered hub, or enter connection details manually."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            selected = user_input.get("hub")
+            if selected == MANUAL_HUB:
+                self._suggested_endpoint = {}
+                return await self.async_step_user()
+            if isinstance(selected, str) and selected in self._discovered_hubs:
+                self._suggested_endpoint = self._discovered_hubs[selected]
+                return await self.async_step_user()
+            errors["base"] = "invalid_config"
+        options: list[selector.SelectOptionDict] = [
+            {"value": hub_id, "label": f"{ep['hostname']} ({ep['host']}, {hub_id})"}
+            for hub_id, ep in sorted(self._discovered_hubs.items())
+        ]
+        options.append({"value": MANUAL_HUB, "label": "Enter manually"})
+        return self.async_show_form(
+            step_id="select_hub",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Required("hub"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=options, mode=selector.SelectSelectorMode.DROPDOWN
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
+        )
 
     def _schema(self) -> probatio.Schema:
         fields: dict[probatio.Marker, object] = {}
+        endpoint = self.endpoint or self._suggested_endpoint
         if self._reauth is None:
-            fields[probatio.Required("host", default=self.endpoint.get("host", ""))] = (
-                str
-            )
+            fields[probatio.Required("host", default=endpoint.get("host", ""))] = str
             fields[
                 probatio.Required(
-                    "hostname", default=self.endpoint.get("hostname", "VMB5000.local")
+                    "hostname", default=endpoint.get("hostname", "VMB5000.local")
                 )
             ] = str
             if self._reconfigure is None:
                 fields[
-                    probatio.Required("hub_id", default=self.endpoint.get("hub_id", ""))
+                    probatio.Required("hub_id", default=endpoint.get("hub_id", ""))
                 ] = str
         existing = self._reauth or self._reconfigure
         old = existing.data if existing else {}
@@ -171,10 +296,28 @@ class ArloLocalConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, object] | None = None
     ) -> ConfigFlowResult:
         errors = {}
+        if (
+            user_input is None
+            and self.source == "user"
+            and not self._discovery_attempted
+        ):
+            self._discovery_attempted = True
+            discovered = await discover_hubs(self.hass)
+            configured_ids = self._async_current_ids()
+            self._discovered_hubs = {
+                hub_id: ep
+                for hub_id, ep in discovered.items()
+                if hub_id not in configured_ids
+            }
+            if len(self._discovered_hubs) > 1:
+                return await self.async_step_select_hub()
+            if self._discovered_hubs:
+                self._suggested_endpoint = next(iter(self._discovered_hubs.values()))
         if self._error:
             errors["base"] = self._error
             self._error = None
         if user_input is not None:
+            cast(_ArloFlowContext, self.context)["setup_started"] = True
             try:
                 config = credential_config(user_input)
                 if self._reauth is None:
@@ -190,6 +333,30 @@ class ArloLocalConfigFlow(ConfigFlow, domain=DOMAIN):
                         and self.endpoint["hub_id"] != hub_id
                     ):
                         raise ValueError("Discovery identity changed")
+                    if self.source == "user":
+                        # Manual setup defaults are suggestions. Preserve the
+                        # service name only when the submitted endpoint matches
+                        # the advertised endpoint; an edit is manual entry.
+                        candidate = self._discovered_hubs.get(hub_id)
+                        if candidate and (host, hostname) == (
+                            candidate["host"],
+                            candidate["hostname"],
+                        ):
+                            self.endpoint["service_name"] = candidate["service_name"]
+                        else:
+                            self.endpoint.pop("service_name", None)
+                        # Manual submission may replace an idle auto-discovered
+                        # form, but never interrupt authentication or a form
+                        # that already received user input.
+                        for flow in self._async_in_progress(
+                            match_context={"unique_id": hub_id, "source": "zeroconf"}
+                        ):
+                            if flow.get("step_id") == "user" and not cast(
+                                _ArloFlowContext, flow["context"]
+                            ).get("setup_started"):
+                                self.hass.config_entries.flow.async_abort(
+                                    flow["flow_id"]
+                                )
                     self.endpoint.update(host=host, hostname=hostname, hub_id=hub_id)
                     await self.async_set_unique_id(hub_id)
                     if self._reconfigure is not None:

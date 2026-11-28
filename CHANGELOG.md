@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+- Discover SmartHubs when Arlo Local is added manually, using Home Assistant's shared Zeroconf service browser. Prepopulate a single unconfigured hub's private IPv4 address, hostname and device ID; provide a selection for multiple hubs and retain editable manual entry if discovery is unavailable.
+- Retain the discovered service name when submitted connection details match the advertisement. Reject malformed or conflicting advertisements and retain duplicate-entry, owner-inventory, MFA and certificate checks. Manual setup can supersede a passive discovery notification without interrupting an authentication flow already in progress.
+
 ## 0.5.0b5 — observation-only development preview
 
 - Retain upstream admission ownership until TLS socket shutdown and relay pump cleanup actually complete, including repeated cancellation and an unresponsive peer. Avoid duplicate TLS close calls and abort an unresponsive close after a bounded grace period.
